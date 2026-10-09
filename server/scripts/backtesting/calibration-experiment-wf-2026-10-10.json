@@ -1,0 +1,544 @@
+{
+  "generatedAt": "2026-10-09T22:59:09.969Z",
+  "experiment": "chronological expanding-window calibration, locked test blocks by season",
+  "forecastSource": "production_reference reconstructed from historical archive (not stored historical snapshots)",
+  "forecastCaveat": "Market-value prior is unavailable historically; closed-form Poisson/Skellam is used instead of live Monte Carlo sampling.",
+  "data": {
+    "source": "server/data/historical/*.json",
+    "seasons": [
+      "2017/18",
+      "2018/19",
+      "2019/20",
+      "2020/21",
+      "2021/22",
+      "2022/23",
+      "2023/24",
+      "2024/25",
+      "2025/26"
+    ],
+    "totalGamesWithDecisions": 3224,
+    "skippedNoDecision": 0,
+    "evaluatedSeasons": [
+      "2018/19",
+      "2019/20",
+      "2020/21",
+      "2021/22",
+      "2022/23",
+      "2023/24",
+      "2024/25",
+      "2025/26"
+    ],
+    "firstSeasonExcludedAsWarmup": "2017/18",
+    "testGames": 2860,
+    "calibrationTrainingGamesBeforeLastBlock": 2814,
+    "calibrationWarmup": "First archived season is training only; for each later season, fit on all earlier seasons and score that season without updating within it.",
+    "modelVersionHandling": "One reconstructed production_reference recipe for all archived games. Current 2026/27 stored snapshots are not pooled into this archive experiment."
+  },
+  "calibration": {
+    "variants": {
+      "baseline": "Raw reconstructed production_reference probabilities; no calibration.",
+      "identity": "Identity mapping p -> p; runtime checked to equal baseline predictions exactly.",
+      "intercept": "sigmoid(logit(p) + b), ridge penalty 0.05 on b, fit on prior seasons only.",
+      "regularized_slope": "sigmoid(a * logit(p)), ridge penalty 0.1 toward a=1, fit on prior seasons only; a constrained to [0.25, 3]."
+    },
+    "parameterUpdate": "Expanding history, updated only at season boundaries; no within-test-season labels are used."
+  },
+  "uncertainty": "Paired percentile bootstrap, 1000 resamples of season-date blocks, fixed seed 20261010. Intervals are exploratory; block count and historical regime changes limit precision.",
+  "overall": {
+    "baseline": {
+      "n": 2860,
+      "accuracy": 0.6143356643356643,
+      "brier": 0.2312893810765053,
+      "logLoss": 0.6546413298806569,
+      "ece": 0.014270475492630049,
+      "calibrationIntercept": 0.03322419668493672,
+      "calibrationSlope": 1.0110903948479872,
+      "calibrationDiagnosticsLowSample": false
+    },
+    "identity": {
+      "n": 2860,
+      "accuracy": 0.6143356643356643,
+      "brier": 0.2312893810765053,
+      "logLoss": 0.6546413298806569,
+      "ece": 0.014270475492630049,
+      "calibrationIntercept": 0.03322419668493672,
+      "calibrationSlope": 1.0110903948479872,
+      "calibrationDiagnosticsLowSample": false
+    },
+    "intercept": {
+      "n": 2860,
+      "accuracy": 0.6097902097902098,
+      "brier": 0.23139794202249883,
+      "logLoss": 0.6548781907135939,
+      "ece": 0.014489070823914894,
+      "calibrationIntercept": 0.02660294879151131,
+      "calibrationSlope": 1.0040391400385054,
+      "calibrationDiagnosticsLowSample": false
+    },
+    "regularized_slope": {
+      "n": 2860,
+      "accuracy": 0.6143356643356643,
+      "brier": 0.23139970903231583,
+      "logLoss": 0.654884823616624,
+      "ece": 0.014208963856520707,
+      "calibrationIntercept": 0.03525922067892071,
+      "calibrationSlope": 1.0183461681327914,
+      "calibrationDiagnosticsLowSample": false
+    }
+  },
+  "comparisons": [
+    {
+      "baseline": "baseline",
+      "variant": "identity",
+      "logLoss": {
+        "n": 2860,
+        "observedDelta": 0,
+        "ci95": [
+          0,
+          0
+        ],
+        "bootstrapUnit": "season-date block",
+        "resamples": 1000
+      },
+      "brier": {
+        "n": 2860,
+        "observedDelta": 0,
+        "ci95": [
+          0,
+          0
+        ],
+        "bootstrapUnit": "season-date block",
+        "resamples": 1000
+      },
+      "accuracyDelta": 0
+    },
+    {
+      "baseline": "baseline",
+      "variant": "intercept",
+      "logLoss": {
+        "n": 2860,
+        "observedDelta": 0.00023686083293650046,
+        "ci95": [
+          -0.00014138143875133135,
+          0.0005963977117368016
+        ],
+        "bootstrapUnit": "season-date block",
+        "resamples": 1000
+      },
+      "brier": {
+        "n": 2860,
+        "observedDelta": 0.00010856094599400624,
+        "ci95": [
+          -0.00006892555351390639,
+          0.00027581566588728027
+        ],
+        "bootstrapUnit": "season-date block",
+        "resamples": 1000
+      },
+      "accuracyDelta": -0.004545454545454519
+    },
+    {
+      "baseline": "baseline",
+      "variant": "regularized_slope",
+      "logLoss": {
+        "n": 2860,
+        "observedDelta": 0.00024349373596677492,
+        "ci95": [
+          -0.000058722726132349674,
+          0.0005698624737066183
+        ],
+        "bootstrapUnit": "season-date block",
+        "resamples": 1000
+      },
+      "brier": {
+        "n": 2860,
+        "observedDelta": 0.00011032795581047865,
+        "ci95": [
+          -0.000019598538412288733,
+          0.00025372446902096425
+        ],
+        "bootstrapUnit": "season-date block",
+        "resamples": 1000
+      },
+      "accuracyDelta": 0
+    }
+  ],
+  "perSeason": [
+    {
+      "season": "2018/19",
+      "trainingN": 364,
+      "testN": 317,
+      "variants": {
+        "baseline": {
+          "n": 317,
+          "accuracy": 0.6056782334384858,
+          "brier": 0.23485612278097115,
+          "logLoss": 0.6622534967253175,
+          "ece": 0.03282937850379711,
+          "calibrationIntercept": 0.03582771855845381,
+          "calibrationSlope": 0.8990701926023712,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "identity": {
+          "n": 317,
+          "accuracy": 0.6056782334384858,
+          "brier": 0.23485612278097115,
+          "logLoss": 0.6622534967253175,
+          "ece": 0.03282937850379711,
+          "calibrationIntercept": 0.03582771855845381,
+          "calibrationSlope": 0.8990701926023712,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "intercept": {
+          "n": 317,
+          "accuracy": 0.61198738170347,
+          "brier": 0.23484615463007727,
+          "logLoss": 0.6622711910168428,
+          "ece": 0.040039131288955476,
+          "calibrationIntercept": 0.014130664976238373,
+          "calibrationSlope": 0.8990701925988824,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "regularized_slope": {
+          "n": 317,
+          "accuracy": 0.6056782334384858,
+          "brier": 0.2348024282523951,
+          "logLoss": 0.6621106197730884,
+          "ece": 0.030301518697552224,
+          "calibrationIntercept": 0.03582771856708964,
+          "calibrationSlope": 0.9524433701608425,
+          "calibrationDiagnosticsLowSample": false
+        }
+      }
+    },
+    {
+      "season": "2019/20",
+      "trainingN": 681,
+      "testN": 300,
+      "variants": {
+        "baseline": {
+          "n": 300,
+          "accuracy": 0.5733333333333334,
+          "brier": 0.24376047983345847,
+          "logLoss": 0.6805300773215454,
+          "ece": 0.06313926898434435,
+          "calibrationIntercept": 0.2014224524400802,
+          "calibrationSlope": 0.46007984903725935,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "identity": {
+          "n": 300,
+          "accuracy": 0.5733333333333334,
+          "brier": 0.24376047983345847,
+          "logLoss": 0.6805300773215454,
+          "ece": 0.06313926898434435,
+          "calibrationIntercept": 0.2014224524400802,
+          "calibrationSlope": 0.46007984903725935,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "intercept": {
+          "n": 300,
+          "accuracy": 0.5633333333333334,
+          "brier": 0.24367257089130048,
+          "logLoss": 0.6803746668305144,
+          "ece": 0.052073312792836564,
+          "calibrationIntercept": 0.19388930474815338,
+          "calibrationSlope": 0.46007984903841515,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "regularized_slope": {
+          "n": 300,
+          "accuracy": 0.5733333333333334,
+          "brier": 0.24355000882191305,
+          "logLoss": 0.680073299399771,
+          "ece": 0.04361335208583794,
+          "calibrationIntercept": 0.2014224524392118,
+          "calibrationSlope": 0.48001408251109745,
+          "calibrationDiagnosticsLowSample": false
+        }
+      }
+    },
+    {
+      "season": "2020/21",
+      "trainingN": 981,
+      "testN": 304,
+      "variants": {
+        "baseline": {
+          "n": 304,
+          "accuracy": 0.625,
+          "brier": 0.22741810580264285,
+          "logLoss": 0.6467263974998062,
+          "ece": 0.0877646146360488,
+          "calibrationIntercept": -0.3936117187569068,
+          "calibrationSlope": 1.623747583476463,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "identity": {
+          "n": 304,
+          "accuracy": 0.625,
+          "brier": 0.22741810580264285,
+          "logLoss": 0.6467263974998062,
+          "ece": 0.0877646146360488,
+          "calibrationIntercept": -0.3936117187569068,
+          "calibrationSlope": 1.623747583476463,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "intercept": {
+          "n": 304,
+          "accuracy": 0.618421052631579,
+          "brier": 0.22805540911828584,
+          "logLoss": 0.6479971243390014,
+          "ece": 0.08868554545072904,
+          "calibrationIntercept": -0.43190344753894233,
+          "calibrationSlope": 1.6237475834581454,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "regularized_slope": {
+          "n": 304,
+          "accuracy": 0.625,
+          "brier": 0.22776162810417774,
+          "logLoss": 0.6474766933960128,
+          "ece": 0.09262142310952795,
+          "calibrationIntercept": -0.39361171872440387,
+          "calibrationSlope": 1.7150195804169903,
+          "calibrationDiagnosticsLowSample": false
+        }
+      }
+    },
+    {
+      "season": "2021/22",
+      "trainingN": 1285,
+      "testN": 334,
+      "variants": {
+        "baseline": {
+          "n": 334,
+          "accuracy": 0.7005988023952096,
+          "brier": 0.20957748910802246,
+          "logLoss": 0.6088667575079373,
+          "ece": 0.08136428015084111,
+          "calibrationIntercept": -0.004499935502372969,
+          "calibrationSlope": 1.5721133319635459,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "identity": {
+          "n": 334,
+          "accuracy": 0.7005988023952096,
+          "brier": 0.20957748910802246,
+          "logLoss": 0.6088667575079373,
+          "ece": 0.08136428015084111,
+          "calibrationIntercept": -0.004499935502372969,
+          "calibrationSlope": 1.5721133319635459,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "intercept": {
+          "n": 334,
+          "accuracy": 0.688622754491018,
+          "brier": 0.20993169914627507,
+          "logLoss": 0.6096674857270775,
+          "ece": 0.06990919101586152,
+          "calibrationIntercept": 0.03375318285018607,
+          "calibrationSlope": 1.5721133319684821,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "regularized_slope": {
+          "n": 334,
+          "accuracy": 0.7005988023952096,
+          "brier": 0.20995249835535973,
+          "logLoss": 0.6097303576261981,
+          "ece": 0.08640611480455052,
+          "calibrationIntercept": -0.004499935495672413,
+          "calibrationSlope": 1.6061672693875848,
+          "calibrationDiagnosticsLowSample": false
+        }
+      }
+    },
+    {
+      "season": "2022/23",
+      "trainingN": 1619,
+      "testN": 420,
+      "variants": {
+        "baseline": {
+          "n": 420,
+          "accuracy": 0.5666666666666667,
+          "brier": 0.24166518052543423,
+          "logLoss": 0.6758138486657845,
+          "ece": 0.05844342093767251,
+          "calibrationIntercept": 0.0461041702651861,
+          "calibrationSlope": 0.6626712849941199,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "identity": {
+          "n": 420,
+          "accuracy": 0.5666666666666667,
+          "brier": 0.24166518052543423,
+          "logLoss": 0.6758138486657845,
+          "ece": 0.05844342093767251,
+          "calibrationIntercept": 0.0461041702651861,
+          "calibrationSlope": 0.6626712849941199,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "intercept": {
+          "n": 420,
+          "accuracy": 0.5642857142857143,
+          "brier": 0.24167575440785152,
+          "logLoss": 0.6758392025088585,
+          "ece": 0.06107569379675114,
+          "calibrationIntercept": 0.0444820289254403,
+          "calibrationSlope": 0.6626712849939976,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "regularized_slope": {
+          "n": 420,
+          "accuracy": 0.5666666666666667,
+          "brier": 0.24206021738207814,
+          "logLoss": 0.6766765210578154,
+          "ece": 0.061724936499382925,
+          "calibrationIntercept": 0.046104170264157064,
+          "calibrationSlope": 0.6402075329951717,
+          "calibrationDiagnosticsLowSample": false
+        }
+      }
+    },
+    {
+      "season": "2023/24",
+      "trainingN": 2039,
+      "testN": 364,
+      "variants": {
+        "baseline": {
+          "n": 364,
+          "accuracy": 0.6153846153846154,
+          "brier": 0.2321056126013953,
+          "logLoss": 0.6569278662715639,
+          "ece": 0.034799321265976076,
+          "calibrationIntercept": 0.052874413715555776,
+          "calibrationSlope": 0.9269526831512945,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "identity": {
+          "n": 364,
+          "accuracy": 0.6153846153846154,
+          "brier": 0.2321056126013953,
+          "logLoss": 0.6569278662715639,
+          "ece": 0.034799321265976076,
+          "calibrationIntercept": 0.052874413715555776,
+          "calibrationSlope": 0.9269526831512945,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "intercept": {
+          "n": 364,
+          "accuracy": 0.6153846153846154,
+          "brier": 0.23213016823694735,
+          "logLoss": 0.6569740952855834,
+          "ece": 0.03543689774463649,
+          "calibrationIntercept": 0.05785844527037927,
+          "calibrationSlope": 0.926952683151762,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "regularized_slope": {
+          "n": 364,
+          "accuracy": 0.6153846153846154,
+          "brier": 0.23210547683113752,
+          "logLoss": 0.6569238053132237,
+          "ece": 0.0348951267409669,
+          "calibrationIntercept": 0.05287441371578073,
+          "calibrationSlope": 0.928906672392142,
+          "calibrationDiagnosticsLowSample": false
+        }
+      }
+    },
+    {
+      "season": "2024/25",
+      "trainingN": 2403,
+      "testN": 411,
+      "variants": {
+        "baseline": {
+          "n": 411,
+          "accuracy": 0.6034063260340633,
+          "brier": 0.23190274226083368,
+          "logLoss": 0.6558401591191904,
+          "ece": 0.06340089105596147,
+          "calibrationIntercept": 0.34303800388969696,
+          "calibrationSlope": 0.7358283018405264,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "identity": {
+          "n": 411,
+          "accuracy": 0.6034063260340633,
+          "brier": 0.23190274226083368,
+          "logLoss": 0.6558401591191904,
+          "ece": 0.06340089105596147,
+          "calibrationIntercept": 0.34303800388969696,
+          "calibrationSlope": 0.7358283018405264,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "intercept": {
+          "n": 411,
+          "accuracy": 0.6034063260340633,
+          "brier": 0.23191177271177726,
+          "logLoss": 0.6558591159037225,
+          "ece": 0.06347095070547211,
+          "calibrationIntercept": 0.34325789411002144,
+          "calibrationSlope": 0.7358283018404997,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "regularized_slope": {
+          "n": 411,
+          "accuracy": 0.6034063260340633,
+          "brier": 0.23191111986169924,
+          "logLoss": 0.6558600017265123,
+          "ece": 0.06362971644687836,
+          "calibrationIntercept": 0.3430380038899494,
+          "calibrationSlope": 0.7385047019055048,
+          "calibrationDiagnosticsLowSample": false
+        }
+      }
+    },
+    {
+      "season": "2025/26",
+      "trainingN": 2814,
+      "testN": 410,
+      "variants": {
+        "baseline": {
+          "n": 410,
+          "accuracy": 0.6317073170731707,
+          "brier": 0.22799576488859433,
+          "logLoss": 0.6480503287615454,
+          "ece": 0.03146111825173788,
+          "calibrationIntercept": -0.04759957577234353,
+          "calibrationSlope": 1.2040832508357753,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "identity": {
+          "n": 410,
+          "accuracy": 0.6317073170731707,
+          "brier": 0.22799576488859433,
+          "logLoss": 0.6480503287615454,
+          "ece": 0.03146111825173788,
+          "calibrationIntercept": -0.04759957577234353,
+          "calibrationSlope": 1.2040832508357753,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "intercept": {
+          "n": 410,
+          "accuracy": 0.6195121951219512,
+          "brier": 0.22802230082517427,
+          "logLoss": 0.6481220961789809,
+          "ece": 0.026468308406282535,
+          "calibrationIntercept": -0.08673270306404209,
+          "calibrationSlope": 1.2040832508286123,
+          "calibrationDiagnosticsLowSample": false
+        },
+        "regularized_slope": {
+          "n": 410,
+          "accuracy": 0.6317073170731707,
+          "brier": 0.22798773391540092,
+          "logLoss": 0.6480337081173523,
+          "ece": 0.031383393610685095,
+          "calibrationIntercept": -0.0475995757726855,
+          "calibrationSlope": 1.2020483689098331,
+          "calibrationDiagnosticsLowSample": false
+        }
+      }
+    }
+  ]
+}
