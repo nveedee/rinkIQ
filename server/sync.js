@@ -58,22 +58,82 @@ export const DEFAULT_NL_SYNC_INTERVAL_MIN = 30
 // HTTP
 // ============================================================================
 
-async function fetchJson(url, { timeoutMs = 10000 } = {}) {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: { 'User-Agent': 'nl-tracker-sync/1.0', Accept: 'application/json' },
-    })
-    if (!res.ok) throw new Error(`HTTP ${res.status} von ${url}`)
-    return await res.json()
-  } catch (e) {
-    if (e.name === 'AbortError') throw new Error(`Timeout nach ${timeoutMs}ms bei ${url}`)
-    throw e
-  } finally {
-    clearTimeout(timer)
+// Retry-Parameter. Bewusst konservativ: max. 3 Versuche gesamt, exponentieller
+// Backoff ab 500ms (500 → 1000ms zwischen den Versuchen), gedeckelt. Nur
+// TRANSIENTE Fehler werden wiederholt (HTTP 429, HTTP 5xx, Netzwerkfehler,
+// Timeout) - normale 4xx (z.B. 400/404) NICHT.
+export const FETCH_MAX_ATTEMPTS = 3
+export const FETCH_BASE_BACKOFF_MS = 500
+const FETCH_MAX_BACKOFF_MS = 20000
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+// Parst den `Retry-After`-Header (Sekunden als Zahl ODER HTTP-Datum) in ms.
+// Null, wenn nicht vorhanden/unparsbar. Auf FETCH_MAX_BACKOFF_MS gedeckelt,
+// damit ein überzogenes Retry-After den Boot nicht blockiert.
+export function parseRetryAfterMs(res, now = Date.now()) {
+  const raw = res && res.headers && typeof res.headers.get === 'function' ? res.headers.get('retry-after') : null
+  if (raw == null || raw === '') return null
+  const secs = Number(raw)
+  let ms
+  if (Number.isFinite(secs)) ms = secs * 1000
+  else {
+    const date = Date.parse(raw)
+    if (Number.isNaN(date)) return null
+    ms = date - now
   }
+  return Math.min(Math.max(0, ms), FETCH_MAX_BACKOFF_MS)
+}
+
+// Holt JSON von `url` mit begrenzten Retries + Backoff. Jeder Versuch hat einen
+// eigenen Timeout (AbortController) - ein abgebrochener Request läuft nicht
+// weiter. Nach ausgeschöpften Versuchen wird der letzte Fehler sauber
+// weitergereicht (der Aufrufer bricht dann ab und schreibt NICHTS - "alles oder
+// nichts" bleibt erhalten). Parse-Fehler bei einer 2xx-Antwort werden NICHT
+// wiederholt (kein transienter Abruf-Fehler).
+export async function fetchJson(url, {
+  timeoutMs = 10000,
+  attempts = FETCH_MAX_ATTEMPTS,
+  baseDelayMs = FETCH_BASE_BACKOFF_MS,
+  log = () => {},
+} = {}) {
+  const retryOrThrow = async (err, attempt, retryAfterMs) => {
+    if (attempt >= attempts) throw err
+    const waitMs = Math.min(retryAfterMs != null ? retryAfterMs : baseDelayMs * 2 ** (attempt - 1), FETCH_MAX_BACKOFF_MS)
+    log(`[NL SYNC] Abruf ${url}: Versuch ${attempt}/${attempts} fehlgeschlagen (${err.message}) - erneut in ${waitMs}ms`)
+    await sleep(waitMs)
+  }
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    let res
+    try {
+      res = await fetch(url, {
+        signal: controller.signal,
+        headers: { 'User-Agent': 'nl-tracker-sync/1.0', Accept: 'application/json' },
+      })
+    } catch (e) {
+      // Netzwerkfehler oder Timeout (AbortError) - beides transient.
+      const err = e.name === 'AbortError'
+        ? new Error(`Timeout nach ${timeoutMs}ms bei ${url}`)
+        : new Error(`Netzwerkfehler bei ${url}: ${e.message}`)
+      await retryOrThrow(err, attempt, null) // wirft beim letzten Versuch
+      continue
+    } finally {
+      clearTimeout(timer)
+    }
+
+    if (res.ok) return await res.json() // Parse-Fehler propagiert bewusst (kein Retry)
+
+    // Nicht-ok: nur 429/5xx sind transient; 4xx (400/404 …) sofort weiterreichen.
+    const err = new Error(`HTTP ${res.status} von ${url}`)
+    err.status = res.status
+    if (res.status !== 429 && res.status < 500) throw err
+    await retryOrThrow(err, attempt, res.status === 429 ? parseRetryAfterMs(res) : null)
+  }
+  // Nicht erreichbar - retryOrThrow wirft spätestens beim letzten Versuch.
+  throw new Error(`Abruf von ${url} nach ${attempts} Versuchen fehlgeschlagen`)
 }
 
 // ============================================================================
@@ -415,9 +475,9 @@ export async function runNlSync({ write = true, log = () => {} } = {}) {
   // Alle drei Endpunkte ZUERST abrufen - erst wenn alle drei erfolgreich sind,
   // wird unten überhaupt etwas mutiert/geschrieben (siehe Kommentar oben).
   const [apiGames, apiTeams, apiPlayers] = await Promise.all([
-    fetchJson(GAMES_URL),
-    fetchJson(TEAMS_URL),
-    fetchJson(PLAYERS_URL),
+    fetchJson(GAMES_URL, { log }),
+    fetchJson(TEAMS_URL, { log }),
+    fetchJson(PLAYERS_URL, { log }),
   ])
 
   if (!Array.isArray(apiGames) || !Array.isArray(apiTeams) || !Array.isArray(apiPlayers)) {
