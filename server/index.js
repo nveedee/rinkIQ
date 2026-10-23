@@ -6,6 +6,7 @@ import sihfSync from './scripts/sync-sihf.cjs'
 import { runNlSync, readNlSyncStatus, DEFAULT_NL_SYNC_INTERVAL_MIN } from './sync.js'
 import { runNlGameDetailSync } from './nlGameDetailSync.js'
 import { pollLiveGames, ensureFreshLiveState, getAllLiveStates, LIVE_POLL_INTERVAL_MS } from './liveSync.js'
+import { runExclusive, writeJsonAtomic } from './dbLock.js'
 
 const { runSync: runSihfSync, runDiscover: runSihfDiscover, readSyncStatus } = sihfSync
 
@@ -70,17 +71,43 @@ function emptyDb() {
 
 function readDb() {
   ensureDb()
+  const raw = fs.readFileSync(DB_PATH, 'utf-8')
   try {
-    return JSON.parse(fs.readFileSync(DB_PATH, 'utf-8'))
+    return JSON.parse(raw)
   } catch (e) {
-    console.error('db.json konnte nicht gelesen werden:', e.message)
+    // Eine beschädigte, aber NICHT leere db.json darf NICHT stillschweigend als
+    // leere DB behandelt werden: der nächste writeDb() würde sonst die (evtl.
+    // noch reparierbaren) Daten endgültig überschreiben. Stattdessen den
+    // Rohinhalt beiseite sichern und hart abbrechen, damit ein Mensch eingreifen
+    // (Backup importieren) kann. Ein echter 0-Byte-Zustand (keine Daten zu
+    // verlieren) wird wie "fehlend" behandelt und frisch initialisiert.
+    if (raw && raw.trim()) {
+      const aside = `${DB_PATH}.corrupt-${Date.now()}`
+      try { fs.writeFileSync(aside, raw) } catch { /* best effort */ }
+      console.error(`db.json ist beschädigt und konnte nicht geparst werden (${e.message}). Rohkopie gesichert: ${aside}. Es wird NICHT über die beschädigte Datei geschrieben - bitte ein Backup per POST /api/import wiederherstellen.`)
+      throw new Error('db.json beschädigt - Schreibschutz aktiv (siehe Server-Log)')
+    }
+    console.error('db.json war leer - initialisiere neu (emptyDb).')
     return emptyDb()
   }
 }
 
 function writeDb(db) {
   ensureDb()
-  fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2))
+  writeJsonAtomic(DB_PATH, db)
+}
+
+// Serialisierter Read-Modify-Write: liest die DB, wendet `mutator(db)` an und
+// schreibt zurück - alles innerhalb EINER runExclusive-Transaktion, damit sich
+// konkurrierende Schreiber (Syncs + API-Mutationen) nie überlappen. Gibt den
+// Rückgabewert des Mutators zurück (oder die DB, falls undefined).
+function mutateDb(mutator) {
+  return runExclusive(() => {
+    const db = readDb()
+    const result = mutator(db)
+    writeDb(db)
+    return result === undefined ? db : result
+  })
 }
 
 // Simple, kollisionsarme ID.
@@ -101,53 +128,74 @@ app.get('/api/data', (_req, res) => {
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
-app.put('/api/settings', (req, res) => {
-  const db = readDb()
-  db.settings = { ...db.settings, ...req.body }
-  writeDb(db)
-  res.json(db.settings)
+app.put('/api/settings', async (req, res) => {
+  try {
+    const settings = await mutateDb((db) => {
+      db.settings = { ...db.settings, ...req.body }
+      return db.settings
+    })
+    res.json(settings)
+  } catch (e) {
+    res.status(500).json({ error: 'Einstellungen konnten nicht gespeichert werden', message: e.message })
+  }
 })
 
 // ---------------------------------------------------------------------------
 // Generischer CRUD-Helfer für Collections (teams, players, games)
 // ---------------------------------------------------------------------------
 function crud(collection, idPrefix) {
-  app.post(`/api/${collection}`, (req, res) => {
-    const db = readDb()
-    const item = { id: makeId(idPrefix), ...req.body }
-    db[collection].push(item)
-    writeDb(db)
-    res.status(201).json(item)
+  app.post(`/api/${collection}`, async (req, res) => {
+    try {
+      const item = await mutateDb((db) => {
+        const it = { id: makeId(idPrefix), ...req.body }
+        db[collection].push(it)
+        return it
+      })
+      res.status(201).json(item)
+    } catch (e) {
+      res.status(500).json({ error: 'Speichern fehlgeschlagen', message: e.message })
+    }
   })
 
-  app.put(`/api/${collection}/:id`, (req, res) => {
-    const db = readDb()
-    const idx = db[collection].findIndex((x) => x.id === req.params.id)
-    if (idx === -1) return res.status(404).json({ error: 'Nicht gefunden' })
-    db[collection][idx] = { ...db[collection][idx], ...req.body, id: req.params.id }
-    writeDb(db)
-    res.json(db[collection][idx])
+  app.put(`/api/${collection}/:id`, async (req, res) => {
+    try {
+      const result = await mutateDb((db) => {
+        const idx = db[collection].findIndex((x) => x.id === req.params.id)
+        if (idx === -1) return { __notFound: true }
+        db[collection][idx] = { ...db[collection][idx], ...req.body, id: req.params.id }
+        return db[collection][idx]
+      })
+      if (result && result.__notFound) return res.status(404).json({ error: 'Nicht gefunden' })
+      res.json(result)
+    } catch (e) {
+      res.status(500).json({ error: 'Speichern fehlgeschlagen', message: e.message })
+    }
   })
 
-  app.delete(`/api/${collection}/:id`, (req, res) => {
-    const db = readDb()
-    const before = db[collection].length
-    db[collection] = db[collection].filter((x) => x.id !== req.params.id)
-    // Aufräumen abhängiger Daten
-    if (collection === 'teams') {
-      db.players = db.players.filter((p) => p.teamId !== req.params.id)
-      db.games = db.games.filter(
-        (g) => g.homeTeamId !== req.params.id && g.awayTeamId !== req.params.id
-      )
+  app.delete(`/api/${collection}/:id`, async (req, res) => {
+    try {
+      const removed = await mutateDb((db) => {
+        const before = db[collection].length
+        db[collection] = db[collection].filter((x) => x.id !== req.params.id)
+        // Aufräumen abhängiger Daten
+        if (collection === 'teams') {
+          db.players = db.players.filter((p) => p.teamId !== req.params.id)
+          db.games = db.games.filter(
+            (g) => g.homeTeamId !== req.params.id && g.awayTeamId !== req.params.id
+          )
+        }
+        if (collection === 'players') {
+          db.games = db.games.map((g) => ({
+            ...g,
+            playerStats: (g.playerStats || []).filter((s) => s.playerId !== req.params.id),
+          }))
+        }
+        return before - db[collection].length
+      })
+      res.json({ removed })
+    } catch (e) {
+      res.status(500).json({ error: 'Löschen fehlgeschlagen', message: e.message })
     }
-    if (collection === 'players') {
-      db.games = db.games.map((g) => ({
-        ...g,
-        playerStats: (g.playerStats || []).filter((s) => s.playerId !== req.params.id),
-      }))
-    }
-    writeDb(db)
-    res.json({ removed: before - db[collection].length })
   })
 }
 
@@ -173,7 +221,9 @@ app.post('/api/sync', async (_req, res) => {
   syncRunning = true
   const logs = []
   try {
-    const summary = await runSihfSync({ write: true, log: (...a) => logs.push(a.join(' ')) })
+    // Über die zentrale Schreib-Queue, damit der Sync nie mit einem parallelen
+    // NL-Sync/Discover/API-Write kollidiert (siehe server/dbLock.js).
+    const summary = await runExclusive(() => runSihfSync({ write: true, log: (...a) => logs.push(a.join(' ')) }))
     res.json({ ...summary, logs })
   } catch (e) {
     res.status(502).json({ error: 'SIHF-Synchronisation momentan nicht verfügbar.', message: e.message, logs })
@@ -204,17 +254,20 @@ app.post('/api/sync-nl', async (_req, res) => {
   nlSyncRunning = true
   const logs = []
   try {
-    const summary = await runNlSync({ write: true, log: (...a) => logs.push(a.join(' ')) })
-    // Game-Detail-Sync (server/nlGameDetailSync.js) läuft NACH dem Basis-Sync,
-    // in einem eigenen try/catch: schlägt er fehl, bleibt die eigentliche
-    // NL-Sync-Antwort (Teams/Spieler/Spielplan) davon unberührt - siehe
-    // Sicherheitsprinzipien dort.
-    let gameDetailSummary = null
-    try {
-      gameDetailSummary = await runNlGameDetailSync({ write: true, log: (...a) => logs.push(a.join(' ')) })
-    } catch (e) {
-      logs.push(`[NL GAME DETAIL] Fehler: ${e.message}`)
-    }
+    // Basis-Sync UND Game-Detail-Sync laufen in EINER Schreib-Queue-Transaktion
+    // (server/dbLock.js), damit dazwischen kein anderer Schreiber die DB
+    // verändert. Der Game-Detail-Sync bleibt in seinem eigenen try/catch:
+    // schlägt er fehl, bleibt die NL-Sync-Antwort davon unberührt.
+    const { summary, gameDetailSummary } = await runExclusive(async () => {
+      const summary = await runNlSync({ write: true, log: (...a) => logs.push(a.join(' ')) })
+      let gameDetailSummary = null
+      try {
+        gameDetailSummary = await runNlGameDetailSync({ write: true, log: (...a) => logs.push(a.join(' ')) })
+      } catch (e) {
+        logs.push(`[NL GAME DETAIL] Fehler: ${e.message}`)
+      }
+      return { summary, gameDetailSummary }
+    })
     res.json({ ...summary, gameDetail: gameDetailSummary, logs })
   } catch (e) {
     res.status(502).json({ error: 'National-League-API momentan nicht erreichbar oder Team-Mapping fehlgeschlagen.', message: e.message, logs })
@@ -329,30 +382,43 @@ app.get('/api/export', (_req, res) => {
   res.json(readDb())
 })
 
-app.post('/api/import', (req, res) => {
+app.post('/api/import', async (req, res) => {
   const incoming = req.body
   if (!incoming || !Array.isArray(incoming.teams)) {
     return res.status(400).json({ error: 'Ungültiges Backup-Format' })
   }
-  const db = emptyDb()
-  writeDb({ ...db, ...incoming })
-  res.json(readDb())
+  try {
+    const db = await runExclusive(() => {
+      writeDb({ ...emptyDb(), ...incoming })
+      return readDb()
+    })
+    res.json(db)
+  } catch (e) {
+    res.status(500).json({ error: 'Import fehlgeschlagen', message: e.message })
+  }
 })
 
-app.post('/api/reset', (req, res) => {
+app.post('/api/reset', async (req, res) => {
   // keepTeams=true behält Teams & Spieler, löscht nur Spiele.
   const keepTeams = req.body && req.body.keepTeams
-  if (keepTeams) {
-    const db = readDb()
-    db.games = []
-    writeDb(db)
-    return res.json(db)
+  try {
+    const db = await runExclusive(() => {
+      if (keepTeams) {
+        const d = readDb()
+        d.games = []
+        writeDb(d)
+        return d
+      }
+      const seed = fs.existsSync(SEED_PATH)
+        ? JSON.parse(fs.readFileSync(SEED_PATH, 'utf-8'))
+        : emptyDb()
+      writeDb(seed)
+      return readDb()
+    })
+    res.json(db)
+  } catch (e) {
+    res.status(500).json({ error: 'Reset fehlgeschlagen', message: e.message })
   }
-  const seed = fs.existsSync(SEED_PATH)
-    ? JSON.parse(fs.readFileSync(SEED_PATH, 'utf-8'))
-    : emptyDb()
-  writeDb(seed)
-  res.json(readDb())
 })
 
 // ---------------------------------------------------------------------------
@@ -407,7 +473,7 @@ app.listen(PORT, () => {
     const poll = () => {
       if (syncRunning) return
       syncRunning = true
-      runSihfSync({ write: true, log: (...a) => console.log('[SIHF SYNC]', ...a) })
+      runExclusive(() => runSihfSync({ write: true, log: (...a) => console.log('[SIHF SYNC]', ...a) }))
         .catch((e) => console.error('[SIHF SYNC] Fehler:', e.message))
         .finally(() => { syncRunning = false })
     }
@@ -422,12 +488,14 @@ app.listen(PORT, () => {
   const pollNl = () => {
     if (nlSyncRunning) return
     nlSyncRunning = true
-    runNlSync({ write: true, log: (...a) => console.log('[NL SYNC]', ...a) })
-      // Game-Detail-Sync (server/nlGameDetailSync.js) läuft NUR nach einem
-      // erfolgreichen Basis-Sync (sonst z.B. unnötige Requests, während die
-      // API insgesamt down ist) - eigener Fehlerpfad, ein fehlschlagendes
-      // Game-Detail darf den nächsten Basis-Sync-Poll nie verhindern.
-      .then(() => runNlGameDetailSync({ write: true, log: (...a) => console.log('[NL GAME DETAIL]', ...a) }))
+    // Basis-Sync + Game-Detail-Sync als EINE Schreib-Queue-Transaktion
+    // (server/dbLock.js), damit kein paralleler Schreiber dazwischenfunkt.
+    // Game-Detail läuft NUR nach erfolgreichem Basis-Sync (sonst z.B. unnötige
+    // Requests, während die API insgesamt down ist).
+    runExclusive(() =>
+      runNlSync({ write: true, log: (...a) => console.log('[NL SYNC]', ...a) })
+        .then(() => runNlGameDetailSync({ write: true, log: (...a) => console.log('[NL GAME DETAIL]', ...a) }))
+    )
       .catch((e) => console.error('[NL SYNC/GAME DETAIL] Fehler:', e.message))
       .finally(() => { nlSyncRunning = false })
   }
@@ -475,7 +543,7 @@ app.listen(PORT, () => {
     const now = new Date()
     const seasonEndYear = now.getMonth() >= 6 ? now.getFullYear() + 1 : now.getFullYear()
     console.log('[SIHF DISCOVER] Start')
-    runSihfDiscover({ write: true, log: (...a) => console.log('[SIHF DISCOVER]', ...a), seasonEndYear })
+    runExclusive(() => runSihfDiscover({ write: true, log: (...a) => console.log('[SIHF DISCOVER]', ...a), seasonEndYear }))
       .then((r) => {
         discoverFailStreak = 0
         console.log(`[SIHF DISCOVER] Fertig: ${r.matched} neu zugeordnet (${r.checked} geprüft)`)

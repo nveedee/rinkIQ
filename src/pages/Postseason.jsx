@@ -44,8 +44,7 @@ function generateSeed() {
 }
 
 export default function Postseason() {
-  const { data } = useData()
-  const preseasonSeasonEnd = usePreseasonElo()
+  const { data, derived } = useData()
   const [simulating, setSimulating] = useState(false)
   const [sim, setSim] = useState(null)
   const [aggregate, setAggregate] = useState(null)
@@ -54,15 +53,9 @@ export default function Postseason() {
   const [selectedTeamId, setSelectedTeamId] = useState(null)
   const [oppTab, setOppTab] = useState('playIn')
 
-  const initialRatings = useMemo(() => {
-    if (!data?.teams) return null
-    const eloStart = data.settings?.eloStart ?? 1500
-    const useMarketValue = data.settings?.marketValuePriorEnabled !== false
-    const marketPrior = useMarketValue
-      ? computeMarketValuePrior(data.teams, data.players, eloStart, data.settings?.priorSpread ?? DEFAULT_PRIOR_SPREAD)
-      : null
-    return marketPrior || computePreseasonRatings(preseasonSeasonEnd, eloStart)
-  }, [data, preseasonSeasonEnd])
+  // Prior kommt zentral aus DataContext (derived.initialRatings) - identische
+  // Werte wie die frühere lokale Berechnung, nur nicht mehr dupliziert.
+  const initialRatings = derived.initialRatings
 
   const teamById = useMemo(() => new Map((data?.teams || []).map((t) => [t.id, t])), [data])
 

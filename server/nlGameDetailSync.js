@@ -40,6 +40,7 @@
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import { writeJsonAtomic } from './dbLock.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // Persistentes Laufzeit-Verzeichnis (Render-Disk) - lokal/ohne PERSIST_DIR =
@@ -411,7 +412,9 @@ export function parseAndMergeGameDetail(db, game, raw, log) {
 // ============================================================================
 
 function readDb() { return JSON.parse(fs.readFileSync(DB_PATH, 'utf-8')) }
-function writeDb(db) { fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2)) }
+// Atomischer Write (tmp + rename); Serialisierung gegen andere Schreiber via
+// Schreib-Queue in server/index.js (runExclusive).
+function writeDb(db) { writeJsonAtomic(DB_PATH, db) }
 
 // Kandidaten: lokal `status:'final'`, `externalId` gesetzt (== NL-API-
 // gameId, von server/sync.js gepflegt), noch KEIN `nlDetailSyncedAt`

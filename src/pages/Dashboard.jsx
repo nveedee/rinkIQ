@@ -73,17 +73,10 @@ export default function Dashboard() {
 
   // 2) Next Games - identische Herleitung wie PlayoffOdds.jsx (siehe
   // dortiger Kommentar), hier auf die nächsten Spiele begrenzt.
-  // usePreseasonElo() lädt einmalig, danach synchron aus dem Cache.
-  const preseasonSeasonEnd = usePreseasonElo()
-  const initialRatings = useMemo(() => {
-    if (!data?.teams) return null
-    const eloStart = data.settings?.eloStart ?? 1500
-    const useMarketValue = data.settings?.marketValuePriorEnabled !== false
-    const marketPrior = useMarketValue
-      ? computeMarketValuePrior(data.teams, data.players, eloStart, data.settings?.priorSpread ?? DEFAULT_PRIOR_SPREAD)
-      : null
-    return marketPrior || computePreseasonRatings(preseasonSeasonEnd, eloStart)
-  }, [data, preseasonSeasonEnd])
+  // initialRatings (Marktwert-/Pre-Season-Prior) kommt jetzt ZENTRAL aus
+  // DataContext (derived.initialRatings) - früher berechnete jede Prognose-
+  // Seite dieselbe Prior-Logik dupliziert; identische Werte, eine Quelle.
+  const initialRatings = derived.initialRatings
   const restDaysEnabled = data.settings?.restDaysEnabled !== false
   const backToBackPenalty = data.settings?.backToBackPenalty ?? DEFAULT_BACK_TO_BACK_PENALTY
   const gameById = useMemo(() => new Map(data.games.map((g) => [g.id, g])), [data.games])

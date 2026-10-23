@@ -94,13 +94,10 @@ export default function TeamDetail() {
   // Marktwert-Prior (src/marketValuePrior.js), wenn aktiviert und Daten
   // vorhanden, sonst der bestehende historische Pre-Season-ELO - identische
   // Priorität wie in DataContext.jsx (derived.eloPriorSource).
-  const preseasonRatings = useMemo(() => {
-    const useMarketValue = data.settings?.marketValuePriorEnabled !== false
-    const marketPrior = useMarketValue
-      ? computeMarketValuePrior(data.teams, data.players, eloStart, data.settings?.priorSpread ?? DEFAULT_PRIOR_SPREAD)
-      : null
-    return marketPrior || computePreseasonRatings(preseasonSeasonEnd, eloStart)
-  }, [preseasonSeasonEnd, eloStart, data.teams, data.players, data.settings])
+  // Prior kommt zentral aus DataContext (derived.initialRatings) - identische
+  // Werte wie die frühere lokale Berechnung (hier weiter unter dem Namen
+  // preseasonRatings verwendet), nur nicht mehr dupliziert.
+  const preseasonRatings = derived.initialRatings
   const power = useMemo(() => {
     if (!derived?.elo?.ratings) return []
     return computePowerRankings(data.teams, data.games, derived.elo.ratings, data.players || [])

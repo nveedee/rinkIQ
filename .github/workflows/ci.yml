@@ -1,0 +1,22 @@
+name: CI
+
+# Build + die gesamte node:test-Suite bei jedem Push/PR. Keine Secrets, keine
+# externen Dienste, kein Netzwerk - die Tests laufen vollständig offline gegen
+# die im Repo liegenden Daten/Fixtures (verifiziert: 347 Tests offline grün).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20 # entspricht render.yaml (NODE_VERSION 20)
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test

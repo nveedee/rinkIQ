@@ -33,6 +33,7 @@
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import { writeJsonAtomic } from './dbLock.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // Persistentes Laufzeit-Verzeichnis (Render-Disk) für die schreibbaren
@@ -80,7 +81,10 @@ async function fetchJson(url, { timeoutMs = 10000 } = {}) {
 // ============================================================================
 
 function readDb() { return JSON.parse(fs.readFileSync(DB_PATH, 'utf-8')) }
-function writeDb(db) { fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2)) }
+// Atomischer Write (tmp + rename), damit ein Absturz mitten im Schreiben keine
+// halb geschriebene db.json hinterlässt. Die Serialisierung gegen andere
+// Schreiber übernimmt die Schreib-Queue in server/index.js (runExclusive).
+function writeDb(db) { writeJsonAtomic(DB_PATH, db) }
 
 export function readNlSyncStatus() {
   try { return JSON.parse(fs.readFileSync(STATUS_PATH, 'utf-8')) } catch { return null }

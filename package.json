@@ -12,6 +12,8 @@
     "start": "node server/index.js",
     "serve": "vite build && node server/index.js",
     "backtest": "node server/scripts/backtesting/run.js",
+    "test": "node --test",
+    "test:dblock": "node --test server/dbLock.test.js",
     "test:backtest": "node --test server/scripts/backtesting/run.test.js",
     "test:sim": "node --test src/playoffSim.test.js",
     "test:wheel": "node --test src/wheelGeometry.test.js",

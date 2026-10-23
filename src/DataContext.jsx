@@ -51,7 +51,13 @@ export function DataProvider({ children }) {
     const eloPriorSource = marketPrior ? 'marketValue' : preseasonRatings ? 'historicalArchive' : 'flat'
 
     const elo = computeElo(data.teams, data.games, data.settings, initialRatings)
-    return { standings, playerStats, elo, eloPriorSource }
+    // initialRatings wird hier EINMAL zentral berechnet und mit herausgegeben,
+    // damit die Prognose-Seiten (Dashboard, PlayoffOdds, Postseason,
+    // MatchupDetail, TeamDetail, FairOdds) nicht jeweils dieselbe Prior-Logik
+    // duplizieren. Identische Formel/Eingaben wie zuvor in jeder Seite
+    // (Marktwert-Prior -> historischer Pre-Season-ELO, eloStart-Default 1500
+    // == ELO_CONFIG.eloStart), daher wertgleich.
+    return { standings, playerStats, elo, eloPriorSource, initialRatings }
   }, [data, preseasonSeasonEnd])
 
   const value = {

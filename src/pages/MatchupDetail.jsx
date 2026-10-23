@@ -303,16 +303,12 @@ export default function MatchupDetail() {
     const pHomeWin = restAdjustment !== 0 ? applyRestAdjustment(rawPHomeWin, game, data.games, backToBackPenalty) : rawPHomeWin
     const pAwayWin = 1 - pHomeWin
 
-    // Marktwert-Prior (Erweiterung 1, src/marketValuePrior.js) - identische
-    // Logik/Priorität wie in DataContext.jsx (derived.eloPriorSource), hier
-    // separat berechnet, weil simulateSingleGame() die STARTWERTE braucht (um
-    // die Saison bis "jetzt" neu durchzurechnen), nicht die bereits
-    // aktualisierten `derived.elo.ratings`.
-    const useMarketValue = data.settings?.marketValuePriorEnabled !== false
-    const marketPrior = useMarketValue
-      ? computeMarketValuePrior(data.teams, players, eloStart, data.settings?.priorSpread ?? DEFAULT_PRIOR_SPREAD)
-      : null
-    const initialRatings = marketPrior || computePreseasonRatings(preseasonSeasonEnd, eloStart)
+    // Prior (STARTWERTE für simulateSingleGame, das die Saison bis "jetzt" neu
+    // durchrechnet - NICHT die bereits aktualisierten derived.elo.ratings)
+    // kommt jetzt zentral aus DataContext (derived.initialRatings). Wertgleich
+    // zur früheren lokalen Berechnung: identische Eingaben (data.teams,
+    // data.players, eloStart via ELO_CONFIG, priorSpread, Pre-Season-Archiv).
+    const initialRatings = derived.initialRatings
     const rawMonteCarlo = played
       ? null
       : simulateSingleGame(data.teams, data.games, data.settings, players, homeTeam.id, awayTeam.id, initialRatings, 10000)

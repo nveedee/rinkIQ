@@ -13,7 +13,7 @@ export default function ExpectedGoals({ homeTeam, awayTeam, xg }) {
 
   return (
     <div className="card card-pad mb">
-      <SectionHeader title="Expected Goals" caption="Aus dem Model Forecast (Pre-Game-Snapshot)" />
+      <SectionHeader title="Simulierte Tore (Ø)" caption="Ø simulierte Tore je Team aus dem Model-Forecast – kein Schussqualitäts-xG (echtes xG: Shot Map / Advanced Stats)" />
       <div className="xg-teams">
         <div className="xg-team">
           <div className="xg-label" style={{ color: homeTeam.color }}>Heim</div>

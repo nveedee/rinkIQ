@@ -97,20 +97,10 @@ export default function PlayoffOdds() {
     return Object.fromEntries(power.map((p) => [p.team.id, p]))
   }, [data, derived])
 
-  // Marktwert-Prior (src/marketValuePrior.js), wenn aktiviert und Daten
-  // vorhanden, sonst der bestehende historische Pre-Season-ELO - identische
-  // Priorität wie in DataContext.jsx (derived.eloPriorSource). Einmal
-  // gemeinsam für Anzeige (Zeile "preElo" unten) UND die Simulation selbst
-  // berechnet, statt wie zuvor zweimal separat.
-  const initialRatings = useMemo(() => {
-    if (!data?.teams) return null
-    const eloStart = data.settings?.eloStart ?? 1500
-    const useMarketValue = data.settings?.marketValuePriorEnabled !== false
-    const marketPrior = useMarketValue
-      ? computeMarketValuePrior(data.teams, data.players, eloStart, data.settings?.priorSpread ?? DEFAULT_PRIOR_SPREAD)
-      : null
-    return marketPrior || computePreseasonRatings(preseasonSeasonEnd, eloStart)
-  }, [data, preseasonSeasonEnd])
+  // Prior (Marktwert -> historischer Pre-Season-ELO) kommt jetzt ZENTRAL aus
+  // DataContext (derived.initialRatings) - für Anzeige (Zeile "preElo" unten)
+  // UND die Simulation; identische Werte wie zuvor, nur nicht mehr dupliziert.
+  const initialRatings = derived.initialRatings
 
   const handleSimulate = async () => {
     if (!data?.teams || !data?.games) return

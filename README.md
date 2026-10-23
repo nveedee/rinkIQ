@@ -1,19 +1,27 @@
 # 🏒 NL Tracker 2026/27
 
-Ein privater Tracker für die Schweizer **National League** Saison 2026/27:
-ELO-Ranking der Teams, klassische Ligatabelle, Spieler-Ranglisten und schnelle
-Erfassung von Spielen inkl. Spieler-Statistiken. Alle Daten trägst du selbst
-ein – es wird keine externe Datenquelle benötigt.
+Ein privater Analytics-Tracker für die Schweizer **National League** Saison
+2026/27: ELO-Ranking, Power Ranking, klassische Ligatabelle, Monte-Carlo-
+Saison-/Playoff-Simulation, Spiel- und Playoff-Prognosen, faire Quoten,
+Spieler-/Torhüter-Ranglisten, Fan Analytics, ein Live-Spiel-Subsystem mit
+Win-Probability-Verlauf sowie eine Model-Performance-/Backtesting-Auswertung.
 
-Frontend: **React + Vite**. Persistenz: eine **JSON-Datei im Projekt**
+**Die Spiel-, Tabellen- und Spielerdaten werden automatisch synchronisiert**
+(öffentliche APIs von `nationalleague.ch` und der SIHF) – es gibt **keine
+manuelle Spielerfassung** mehr. Manuell bleibt nur die Kaderpflege (Teams/
+Spieler-CRUD).
+
+Frontend: **React 18 + Vite**. Persistenz: eine **JSON-Datei**
 (`server/data/db.json`), die ein kleiner **Node/Express-Server** liest und
-schreibt.
+schreibt. Der vollständige, gegen den Code verifizierte Funktionsumfang steht
+in **[`FEATURES.md`](./FEATURES.md)**.
 
 ---
 
 ## Voraussetzungen
 
-- **Node.js 18 oder neuer** (empfohlen: 20/22). Prüfen mit `node -v`.
+- **Node.js 20 oder neuer** (Deployment läuft auf Node 20, lokal getestet mit
+  24). Prüfen mit `node -v`.
 - npm (kommt mit Node).
 
 ## Installation & Start
@@ -44,16 +52,18 @@ Danach im Browser **http://localhost:5173** öffnen. Fertig.
 
 ## So benutzt du die App
 
-1. **Kader anlegen** – unter **Teams & Kader** ein Team öffnen und Spieler
-   hinzufügen (Name, Nummer, Position: Torhüter / Verteidiger / Stürmer).
-   Die 14 NL-Teams sind bereits vorbefüllt.
-2. **Spiel erfassen** – unter **Spiel erfassen**: Datum, Heim, Auswärts,
-   Endstand und ggf. Overtime/Penalty wählen. Darunter erscheinen beide Kader.
-   Trage Tore/Assists/± /Strafminuten (bzw. Gegentore/Paraden bei Torhütern)
-   direkt in die Tabelle ein. Eine Zeile wird automatisch als „dabei" markiert,
-   sobald du etwas einträgst. Mit **Tab** springst du schnell durch die Felder.
-3. Alles Weitere – **Tabelle**, **ELO-Ranking** und **Spieler-Ranking** –
-   berechnet sich automatisch aus den erfassten Spielen.
+1. **Starten** – nach `npm run dev` (oder `npm run serve`) ist die App im
+   Browser offen. Der Server **synchronisiert die Spiele, die Tabelle und die
+   Spielerdaten automatisch** aus den öffentlichen NL-/SIHF-APIs (siehe
+   „Auto-Sync im Dauerbetrieb" unten). Du musst **keine Spiele mehr von Hand
+   erfassen** – diese Funktion wurde entfernt.
+2. **Kader pflegen (optional)** – unter **Teams & Kader** lassen sich Teams
+   und Spieler weiterhin manuell anlegen/bearbeiten (Name, Nummer, Position).
+   Vom Sync verwaltete Felder (`externalId`, `apiStats`, Marktwerte …) werden
+   beim nächsten Lauf aber wieder überschrieben.
+3. **Analysieren** – Tabelle, ELO, Power Ranking, Playoff Odds, Prognosen,
+   Faire Quoten, Spieler-/Torhüter-Ranglisten, Fan Analytics und Model
+   Performance berechnen sich automatisch aus den synchronisierten Daten.
 
 ### Punkte- und ELO-System
 
@@ -67,11 +77,33 @@ Danach im Browser **http://localhost:5173** öffnen. Fertig.
 ## Datenspeicherung
 
 - Alles liegt in **`server/data/db.json`**. Diese Datei wird beim ersten Start
-  automatisch aus `server/data/seed.json` (14 Teams) erzeugt.
-- In den **Einstellungen** kannst du zusätzlich ein Backup als JSON
-  exportieren/importieren.
-- Möchtest du bei Null anfangen: `server/data/db.json` löschen – beim nächsten
-  Start wird sie neu aus dem Seed erstellt.
+  automatisch aus `server/data/seed.json` (14 Teams + Spielplan) erzeugt.
+- **Schreibzugriffe sind serialisiert und atomar**: Alle db.json-verändernden
+  Vorgänge (beide Syncs, Game-Detail-Sync, API-Mutationen) laufen über eine
+  zentrale Schreib-Queue (`server/dbLock.js`, `runExclusive`), sodass sich
+  gleichzeitige Läufe nicht gegenseitig überschreiben; geschrieben wird per
+  temporärer Datei + `rename` (`writeJsonAtomic`), damit ein Absturz keine
+  halb geschriebene Datei hinterlässt.
+- **Schutz vor stillem Datenverlust**: Ist `db.json` vorhanden, aber nicht
+  parsebar (beschädigt), sichert der Server eine Rohkopie als
+  `db.json.corrupt-<zeit>` und **bricht ab, statt mit einer leeren DB
+  weiterzuschreiben** – danach ein Backup per **Einstellungen → Import**
+  einspielen.
+- **Persistenter Pfad (`PERSIST_DIR`)**: Standardmässig schreibt der Server
+  nach `server/data`. Für eine Plattform mit separatem Datenträger lässt sich
+  über die Umgebungsvariable `PERSIST_DIR` ein anderes Verzeichnis für die
+  schreibbaren Dateien (db.json + Sync-Status) wählen; `seed.json` bleibt
+  bewusst im Repo-Pfad (siehe `render.yaml`).
+- In den **Einstellungen**: Backup als JSON exportieren/importieren und Reset
+  (nur Spiele oder komplett auf den Seed).
+
+> **Render-Hinweis (ehrlich):** `render.yaml` beschreibt einen persistenten
+> Disk-Mount, der aber **erst auf einem Bezahlplan** greift. Auf dem
+> **Free-Plan ist die Festplatte ephemer** – `db.json` überlebt einen
+> Redeploy/Spin-down dann **nicht** und muss nach dem Start (`BOOT_SKIP_SYNC=1`
+> verhindert, dass ein Auto-Sync dazwischenschreibt) per `POST /api/import`
+> aus einem Backup wiederhergestellt werden. Dauerhafte Persistenz ist ohne
+> Plan-Wechsel **nicht** garantiert.
 
 ---
 
@@ -83,32 +115,34 @@ nl-tracker/
 ├─ vite.config.js          # Vite-Config inkl. /api-Proxy auf Port 3001
 ├─ package.json            # Scripts & Abhängigkeiten
 ├─ server/
-│  ├─ index.js             # Express-API (liest/schreibt db.json)
+│  ├─ index.js             # Express-API (liest/schreibt db.json, startet Syncs)
+│  ├─ dbLock.js            # Schreib-Queue (runExclusive) + atomarer Write
+│  ├─ sync.js              # NL-API-Sync (Spiele/Tabelle/Spieler/Marktwerte)
+│  ├─ nlGameDetailSync.js  # NL-Game-Detail-Sync (Boxscore, Schussdaten/xG)
+│  ├─ liveSync.js          # Live-Spielstand-Poller (schreibt db.json NICHT)
+│  ├─ liveReplay.js        # Replay-/Timeline-Rekonstruktion abgeschlossener Spiele
+│  ├─ scripts/
+│  │  ├─ sync-sihf.cjs     # SIHF-Sync (Live-Boxscores) + Discover
+│  │  ├─ predictions.js    # Pre-Game-Prediction-Snapshots
+│  │  └─ backtesting/      # Walk-Forward-Backtest-Tooling
 │  └─ data/
-│     ├─ seed.json         # 14 NL-Teams (Vorlage)
-│     └─ db.json           # deine Live-Daten (wird automatisch erzeugt)
+│     ├─ seed.json         # 14 NL-Teams + Spielplan (Vorlage)
+│     └─ db.json           # Live-Daten (wird automatisch erzeugt)
 └─ src/
-   ├─ main.jsx             # React-Einstieg
-   ├─ App.jsx              # Layout + Routing
+   ├─ main.jsx / App.jsx   # React-Einstieg, Layout + Routing (alle Routen)
    ├─ DataContext.jsx      # zentraler State + abgeleitete Statistiken
-   ├─ api.js               # fetch-Wrapper für die API
-   ├─ elo.js               # ELO-Berechnung
-   ├─ stats.js             # Tabelle & Spieler-Statistik
-   ├─ styles.css           # Design-System (Dark Mode)
-   ├─ components/
-   │  └─ ui.jsx            # Wiederverwendbare UI (Tabelle, Modal, Toast …)
-   └─ pages/
-      ├─ Dashboard.jsx
-      ├─ Standings.jsx
-      ├─ EloRanking.jsx
-      ├─ PlayerRankings.jsx
-      ├─ Games.jsx
-      ├─ GameEntry.jsx     # schnelle Spiel-/Stat-Erfassung
-      ├─ Teams.jsx
-      ├─ TeamDetail.jsx    # Kaderverwaltung
-      ├─ PlayerDetail.jsx
-      └─ Settings.jsx
+   ├─ elo.js / powerRankings.js / playoffSim.js / predictionMetrics.js …  # Logik
+   ├─ components/          # UI + Visualisierungen (inkl. Live-/Replay-Komponenten)
+   └─ pages/               # Dashboard, Standings, EloRanking, PowerRankings,
+                           # PlayoffOdds, Postseason, PlayerRankings, Goalies,
+                           # Topscorers, FairOdds, FanAnalytics, HeadToHead,
+                           # Schedule, MatchupDetail, Teams, TeamDetail,
+                           # PlayerDetail, ModelPerformance, Backtesting, Settings
 ```
+
+Die vollständige, gegen den Code verifizierte Feature-/Routen-/Komponenten-
+Übersicht steht in **[`FEATURES.md`](./FEATURES.md)**; die Routen selbst sind
+in `src/App.jsx` definiert.
 
 ## Nützliche Scripts
 
@@ -118,6 +152,18 @@ nl-tracker/
 | `npm run build`   | Nur Produktions-Build des Frontends (`dist/`)                  |
 | `npm run start`   | Nur den API-Server starten (kein Build, kein Frontend-Ausliefern) |
 | `npm run serve`   | **Build + Server in einem Prozess** – siehe unten               |
+| `npm test`        | Gesamte `node --test`-Suite (alle `*.test.js`, offline)         |
+
+### Tests
+
+Die Logik ist mit Node's eingebautem Test-Runner abgedeckt (`node:test`,
+keine zusätzliche Abhängigkeit). `npm test` führt **alle** Suiten aus
+(zuletzt 347 Tests, vollständig offline – kein Netzwerk, keine Produktionsdaten).
+Einzelne Bereiche: `npm run test:dblock` (Schreib-Serialisierung),
+`npm run test:sim`, `test:scoreline`, `test:wheel`, `test:live`,
+`test:advice`, `test:prediction`, `test:backtest`. React-Seiten/Komponenten
+haben weiterhin **keine** Render-Tests. CI (`.github/workflows/ci.yml`) führt
+`npm ci && npm run build && npm test` bei Push/PR aus.
 
 ---
 

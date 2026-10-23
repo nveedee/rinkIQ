@@ -524,7 +524,21 @@ function parseLiveSnapshot(raw) {
 // ============================================================================
 
 function readDb() { return JSON.parse(fs.readFileSync(DB_PATH, 'utf-8')) }
-function writeDb(db) { fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2)) }
+// Atomischer Write (tmp + rename), damit ein Absturz mitten im Schreiben keine
+// halb geschriebene db.json hinterlässt. Serialisierung gegen andere Schreiber
+// übernimmt die Schreib-Queue in server/index.js (runExclusive) - dieses Skript
+// ist CommonJS und bindet server/dbLock.js (ESM) daher bewusst NICHT ein,
+// sondern dupliziert nur den kleinen atomaren Write.
+function writeDb(db) {
+  const tmp = `${DB_PATH}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  fs.writeFileSync(tmp, JSON.stringify(db, null, 2))
+  try {
+    fs.renameSync(tmp, DB_PATH)
+  } catch (e) {
+    try { fs.unlinkSync(tmp) } catch { /* Aufräumen best effort */ }
+    throw e
+  }
+}
 
 function readSyncStatus() {
   try { return JSON.parse(fs.readFileSync(STATUS_PATH, 'utf-8')) } catch { return null }
