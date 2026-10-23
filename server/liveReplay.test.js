@@ -10,12 +10,25 @@
 // ---------------------------------------------------------------------------
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import sihfSync from './scripts/sync-sihf.cjs'
 import { buildReplayLiveState, buildRealGameReplayState, buildRealGameReplayTimeline, _resetRealGameCacheForTests } from './liveReplay.js'
 import { computeLiveWinProbability, REGULATION_MINUTES } from '../src/liveProbability.js'
 
-test('Replay 0:00 - Spielbeginn, 0:0, noch nicht live', () => {
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+// buildReplayLiveState liest das Archiv-Fixture server/data/historical/
+// 2017-18.json (BEWUSST gitignored, siehe .gitignore). Fehlt es - z.B. in
+// einem frischen CI-Checkout - werden die darauf basierenden Replay-Tests
+// übersprungen statt mit ENOENT zu scheitern. Die buildRealGameReplayState-/
+// Timeline-Tests weiter unten brauchen das Archiv NICHT (sie bekommen ihre
+// Rohdaten injiziert) und laufen weiterhin über `test`.
+const HAVE_ARCHIVE = fs.existsSync(path.join(__dirname, 'data', 'historical', '2017-18.json'))
+const archiveTest = HAVE_ARCHIVE ? test : test.skip
+
+archiveTest('Replay 0:00 - Spielbeginn, 0:0, noch nicht live', () => {
   const s = buildReplayLiveState(0)
   assert.equal(s.homeGoals, 0)
   assert.equal(s.awayGoals, 0)
@@ -24,7 +37,7 @@ test('Replay 0:00 - Spielbeginn, 0:0, noch nicht live', () => {
   assert.equal(s.replaySourceGameId, '20181105000001')
 })
 
-test('Replay nach 1. Tor (16:00) - EVZ führt 0:1', () => {
+archiveTest('Replay nach 1. Tor (16:00) - EVZ führt 0:1', () => {
   const s = buildReplayLiveState(16 * 60)
   assert.equal(s.homeGoals, 0)
   assert.equal(s.awayGoals, 1)
@@ -32,7 +45,7 @@ test('Replay nach 1. Tor (16:00) - EVZ führt 0:1', () => {
   assert.equal(s.goals.length, 1)
 })
 
-test('Replay Periodenwechsel - Periodenzeile erscheint erst nach Drittelende', () => {
+archiveTest('Replay Periodenwechsel - Periodenzeile erscheint erst nach Drittelende', () => {
   const before = buildReplayLiveState(19 * 60)
   const after = buildReplayLiveState(21 * 60)
   assert.equal(before.periods.length, 0, 'vor 20:00 ist die 1. Drittel-Zeile noch nicht abgeschlossen/sichtbar')
@@ -40,21 +53,21 @@ test('Replay Periodenwechsel - Periodenzeile erscheint erst nach Drittelende', (
   assert.equal(after.periods[0].away, 1)
 })
 
-test('Replay mehrere Tore (34:00) - Stand 2:2 nach 4 Toren', () => {
+archiveTest('Replay mehrere Tore (34:00) - Stand 2:2 nach 4 Toren', () => {
   const s = buildReplayLiveState(34 * 60)
   assert.equal(s.homeGoals, 2)
   assert.equal(s.awayGoals, 2)
   assert.equal(s.goals.length, 4)
 })
 
-test('Replay Penalty (05:00) - genau die erste, bereits verhängte Strafe ist sichtbar', () => {
+archiveTest('Replay Penalty (05:00) - genau die erste, bereits verhängte Strafe ist sichtbar', () => {
   const s = buildReplayLiveState(5 * 60)
   assert.equal(s.penalties.length, 1)
   assert.equal(s.penalties[0].minutes, 2)
   assert.ok(s.penalties[0].teamId)
 })
 
-test('Replay 50:00 - noch REG, kein verfrühtes Overtime/Final', () => {
+archiveTest('Replay 50:00 - noch REG, kein verfrühtes Overtime/Final', () => {
   const s = buildReplayLiveState(50 * 60)
   assert.equal(s.status, 'live')
   assert.equal(s.phase, 'REG')
@@ -62,7 +75,7 @@ test('Replay 50:00 - noch REG, kein verfrühtes Overtime/Final', () => {
   assert.equal(s.awayGoals, 2)
 })
 
-test('Replay Overtime (61:00) - Statuslabel zeigt Overtime, Spiel noch nicht final', () => {
+archiveTest('Replay Overtime (61:00) - Statuslabel zeigt Overtime, Spiel noch nicht final', () => {
   const s = buildReplayLiveState(61 * 60)
   assert.equal(s.status, 'live')
   assert.equal(s.statusLabel, 'Overtime')
@@ -70,7 +83,7 @@ test('Replay Overtime (61:00) - Statuslabel zeigt Overtime, Spiel noch nicht fin
   assert.equal(s.awayGoals, 2)
 })
 
-test('Replay Final (inkl. Shootout) - Endstand 2:3, Phase SO, Status final', () => {
+archiveTest('Replay Final (inkl. Shootout) - Endstand 2:3, Phase SO, Status final', () => {
   const s = buildReplayLiveState(66 * 60)
   assert.equal(s.status, 'final')
   assert.equal(s.phase, 'SO')
@@ -78,7 +91,7 @@ test('Replay Final (inkl. Shootout) - Endstand 2:3, Phase SO, Status final', () 
   assert.equal(s.awayGoals, 3)
 })
 
-test('Replay: unbekannte spätere Zeitpunkte liefern keine zusätzlichen (erfundenen) Tore', () => {
+archiveTest('Replay: unbekannte spätere Zeitpunkte liefern keine zusätzlichen (erfundenen) Tore', () => {
   const s = buildReplayLiveState(200 * 60) // weit nach Spielende
   assert.equal(s.homeGoals, 2)
   assert.equal(s.awayGoals, 3)

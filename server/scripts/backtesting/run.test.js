@@ -6,7 +6,7 @@
 //         (oder: npm run test:backtest)
 // ---------------------------------------------------------------------------
 
-import test from 'node:test'
+import baseTest from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'fs'
 import path from 'path'
@@ -24,6 +24,14 @@ const ELO_PATH = path.join(__dirname, '..', '..', '..', 'src', 'elo.js')
 const REST_DAYS_PATH = path.join(__dirname, '..', '..', '..', 'src', 'restDays.js')
 const PLAYOFF_SIM_PATH = path.join(__dirname, '..', '..', '..', 'src', 'playoffSim.js')
 const PREDICTIONS_JS_PATH = path.join(__dirname, '..', 'predictions.js')
+
+// Fast alle Tests hier brauchen das historische Archiv unter
+// server/data/historical (BEWUSST gitignored, siehe .gitignore). Fehlt es -
+// z.B. in einem frischen CI-Checkout - werden die datenabhängigen Tests
+// übersprungen statt mit ENOENT hart zu scheitern. Der reine Quellcode-
+// Invarianten-Test unten läuft über `baseTest` immer (er braucht keine Daten).
+const HAVE_HISTORICAL = fs.existsSync(path.join(HISTORICAL_DIR, '_summary.json'))
+const test = HAVE_HISTORICAL ? baseTest : baseTest.skip
 
 function loadEverything() {
   const { games } = loadHistoricalGames()
@@ -65,7 +73,7 @@ test('db.json bleibt unverändert (Backtest rührt Live-Daten nicht an)', () => 
   assert.equal(after, before, 'db.json wurde durch den Backtest-Lauf verändert')
 })
 
-test('Produktivdateien (elo.js, restDays.js, playoffSim.js, predictions.js, ModelPerformance.jsx, predictionMetrics.js) unverändert', () => {
+baseTest('Produktivdateien (elo.js, restDays.js, playoffSim.js, predictions.js, ModelPerformance.jsx, predictionMetrics.js) unverändert', () => {
   // Diese Dateien werden vom Backtest-Modul nur IMPORTIERT/duplizierte
   // Formeln zitiert - nie modifiziert. Prüft konkret, dass die bekannten
   // Kern-Exports/Referenzwerte noch vorhanden sind (Canary-Check statt
