@@ -208,7 +208,8 @@ export default function PlayerRankings() {
     }
     b.sort((a, b2) => b2.trend.ratio - a.trend.ratio)
     d.sort((a, b2) => a.trend.ratio - b2.trend.ratio)
-    return { breakouts: b.slice(0, 5), declines: d.slice(0, 5) }
+    // Mehr als die Top 5 behalten: die TrendGroup-Liste lässt sich aufklappen.
+    return { breakouts: b.slice(0, 20), declines: d.slice(0, 20) }
   }, [data.players, data.teams, playerHistoryData, statById, currentSeasonLabel, baselines])
 
   // 5) Market Analytics. mvRisers/mvFallers: Richtung aus marketValueTrend
@@ -605,28 +606,48 @@ function LeaderCard({ title, entries, formatValue }) {
 // laufenden aktuellen Saison stammt (per Definition weniger Spiele als eine
 // abgeschlossene Saison) - reine Anzeige, classifyTrend()/trend-Werte
 // unverändert aus playerHistory.js übernommen.
+const TREND_PREVIEW = 5
+
 function TrendGroup({ title, entries, tone, currentSeasonLabel }) {
+  const [expanded, setExpanded] = useState(false)
+  const shown = expanded ? entries : entries.slice(0, TREND_PREVIEW)
+  const rest = entries.length - TREND_PREVIEW
   return (
     <div className="card">
-      <div className="card-pad" style={{ paddingBottom: 6 }}><div className="section-label" style={{ margin: 0 }}>{title}</div></div>
+      <div className="card-pad" style={{ paddingBottom: 6 }}>
+        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
+          <div className="section-label" style={{ margin: 0 }}>{title}</div>
+          {entries.length > 0 && <span className="muted" style={{ fontSize: 11 }}>{entries.length}</span>}
+        </div>
+      </div>
       {entries.length === 0 ? (
         <div className="card-pad muted" style={{ fontSize: 12.5, paddingTop: 0 }}>Keine {tone === 'good' ? 'Kandidaten' : 'Auffälligkeiten'}.</div>
       ) : (
         <div className="card-pad" style={{ paddingTop: 0 }}>
-          {entries.map(({ player, team, trend, impact }) => {
+          {shown.map(({ player, team, trend, impact }) => {
             const abs = trend.latestPpg - trend.careerPpgExclLatest
             const pct = (trend.ratio - 1) * 100
             const smallSample = trend.latestSeason === currentSeasonLabel
+            const gp = trend.latestGp
+            const pts = trend.latestPoints
             return (
               <div key={player.id} className="row" style={{ padding: '9px 0', borderBottom: '1px solid var(--border)', gap: 10, alignItems: 'center' }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="row gap-sm" style={{ flexWrap: 'wrap' }}>
                     <Link to={`/players/${player.id}`} style={{ fontWeight: 700 }}>{player.name}</Link>
-                    {smallSample && <span className="chip" title="Basiert auf der noch laufenden Saison, nicht auf einer abgeschlossenen">geringe Stichprobe</span>}
+                    {smallSample && (
+                      <span className="chip" title="Basiert auf der noch laufenden, unvollständigen Saison - nicht auf einer abgeschlossenen">laufende Saison</span>
+                    )}
                   </div>
                   <div className="muted" style={{ fontSize: 11.5 }}>
                     Saison {trend.latestSeason} · {team ? team.short : '–'} · {POSITION_LABEL[player.position]} · Impact {impact ? impact.score.toFixed(1) : '–'}
                   </div>
+                  {gp != null && (
+                    <div className="muted" style={{ fontSize: 11 }}>
+                      {gp} {gp === 1 ? 'Spiel' : 'Spiele'}, {pts} {pts === 1 ? 'Punkt' : 'Punkte'}
+                      {trend.priorSeasonsCount != null && <> · Karriere-Vergleich aus {trend.priorSeasonsCount} {trend.priorSeasonsCount === 1 ? 'Saison' : 'Saisons'}</>}
+                    </div>
+                  )}
                 </div>
                 <div style={{ textAlign: 'right', flex: 'none' }}>
                   <div style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
@@ -639,6 +660,11 @@ function TrendGroup({ title, entries, tone, currentSeasonLabel }) {
               </div>
             )
           })}
+          {rest > 0 && (
+            <button className="btn ghost sm" style={{ marginTop: 10 }} onClick={() => setExpanded((v) => !v)}>
+              {expanded ? 'Weniger anzeigen' : `${rest} weitere anzeigen`}
+            </button>
+          )}
         </div>
       )}
     </div>

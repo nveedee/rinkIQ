@@ -464,7 +464,14 @@ export function classifyTrend(seasons) {
   const last2 = played.slice(-2)
   const last2Gp = last2.reduce((s, x) => s + x.gp, 0)
   const last2Ppg = last2Gp > 0 ? last2.reduce((s, x) => s + x.points, 0) / last2Gp : null
-  return { label, ratio, latestPpg, careerPpgExclLatest, last2Ppg, latestSeason: latest.season }
+  // Konkrete Stichprobengrössen zusätzlich mitgeben (reine Transparenz, ändert
+  // die Klassifikation NICHT) - erlaubt der UI, "geringe Stichprobe" mit echten
+  // Zahlen zu belegen (z.B. "3 Spiele · 1 Pkt").
+  return {
+    label, ratio, latestPpg, careerPpgExclLatest, last2Ppg, latestSeason: latest.season,
+    latestGp: latest.gp, latestPoints: latest.points,
+    priorGp, priorSeasonsCount: priorSeasons.length,
+  }
 }
 
 // Ø P/GP der letzten (bis zu) N gespielten Saisons (Spiel-gewichtet:
