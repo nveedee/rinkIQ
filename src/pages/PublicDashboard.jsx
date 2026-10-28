@@ -50,7 +50,7 @@ export default function PublicDashboard() {
         </div>
       </div>
 
-      <div className="grid-2" style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
+      <div className="grid-2" style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(min(280px, 100%), 1fr))' }}>
         <div className="card card-pad">
           <h2 style={{ marginTop: 0 }}>Letzte Resultate</h2>
           {results.length === 0 && <div className="muted">Noch keine gespielten Partien.</div>}

@@ -497,7 +497,7 @@ export default function TeamDetail() {
           zweites, fast identisches Liniendiagramm. */}
       <div className="card card-pad mb">
         <h2 className="mb">Form</h2>
-        <div className="grid grid-3 mb" style={{ gridTemplateColumns: `repeat(${formTiles.length}, 1fr)` }}>
+        <div className="grid grid-3 mb" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(110px, 1fr))` }}>
           {formTiles.map(([label, f]) => (
             <div key={label} className="tile">
               <div className="label">{label}</div>
@@ -1204,8 +1204,8 @@ function SeasonLineChart({ points, color, valueFmt = (v) => v, yMin, yMax, yTick
       <svg
         ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}
-        width="100%"
-        style={{ minWidth: 280, display: 'block', cursor: points.length > 1 ? 'crosshair' : 'default' }}
+        className="fit-chart"
+        style={{ cursor: points.length > 1 ? 'crosshair' : 'default' }}
         onMouseMove={handleMove}
         onMouseLeave={() => setHoverIdx(null)}
       >
@@ -1248,7 +1248,7 @@ function TeamHistoryChart({ seasons, color }) {
   const y = (v) => pad.t + (1 - v / max) * (H - pad.t - pad.b)
   const d = played.map((s, i) => `${i === 0 ? 'M' : 'L'}${x(i)},${y(s.pts / s.gp)}`).join(' ')
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ minWidth: 320 }}>
+    <svg viewBox={`0 0 ${W} ${H}`} className="fit-chart">
       <path d={d} fill="none" stroke={color} strokeWidth="2" opacity="0.9" />
       {played.map((s, i) => (
         <text key={s.season} x={x(i)} y={H - 4} fontSize="9" fill="var(--text-dim)" textAnchor="middle">{s.season.slice(2, 4)}</text>

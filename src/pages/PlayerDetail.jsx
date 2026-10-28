@@ -401,7 +401,7 @@ export default function PlayerDetail() {
       {!goalie && historySeasons.length > 0 && (
         <div className="card card-pad mb">
           <h2 className="mb">Aktuelle Saison vs. Historie</h2>
-          <div className="grid" style={{ gridTemplateColumns: `repeat(${Math.min(mergedHistorySeasons.length + 1, 5)}, 1fr)`, gap: 10 }}>
+          <div className="grid" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(84px, 1fr))`, gap: 10 }}>
             <div className="tile">
               <div className="row spread" style={{ alignItems: 'baseline' }}>
                 <div className="label">{data.settings?.seasonName?.split(' ').pop() || 'Aktuell'}</div>
@@ -438,7 +438,7 @@ export default function PlayerDetail() {
       {!goalie && currentSeasonRecord && (
         <div className="card card-pad mb">
           <h2 className="mb">Saisontrend {currentSeasonLabel}</h2>
-          <div className="tiles mb" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+          <div className="tiles mb">
             <Tile label="Spiele" value={currentSeasonRecord.gp} />
             <Tile label="Tore / Assists" value={`${currentSeasonRecord.goals} / ${currentSeasonRecord.assists}`} />
             <Tile label="Punkte" value={currentSeasonRecord.points} />
@@ -967,7 +967,7 @@ export default function PlayerDetail() {
       {career && (
         <div className="card card-pad mb">
           <h2 className="mb">Karriere-Zusammenfassung</h2>
-          <div className="tiles" style={{ gridTemplateColumns: goalie ? 'repeat(4, 1fr)' : 'repeat(4, 1fr)' }}>
+          <div className="tiles">
             {goalie ? (
               <>
                 <Tile label="NL-Spiele" value={career.gp} />
@@ -1224,7 +1224,7 @@ function GameFormChart({ log }) {
         </div>
       </div>
       <div style={{ overflowX: 'auto' }}>
-        <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ minWidth: 480 }}>
+        <svg viewBox={`0 0 ${W} ${H}`} className="fit-chart">
           <line x1={pad.l} x2={W - pad.r} y1={y(0)} y2={y(0)} stroke="var(--border)" />
           {dots.map((d) => {
             const toi = log[d.i]?.s?.toiSec
@@ -1250,12 +1250,12 @@ function PercentileRow({ label, value, pct, baselines, position, statKey, fmt })
   if (value == null || pct == null) return null
   const avg = baselines?.[position]?.[statKey]?.mean
   return (
-    <div className="row" style={{ fontSize: 12.5, marginBottom: 8 }}>
+    <div className="row pctile-row" style={{ fontSize: 12.5, marginBottom: 8 }}>
       <span className="muted" style={{ minWidth: 90 }}>{label}</span>
       <div className="bar-track" style={{ flex: 1 }}>
         <div className="bar-fill" style={{ width: `${Math.min(Math.max(pct, 0), 100)}%` }} />
       </div>
-      <span style={{ minWidth: 230, textAlign: 'right', fontFamily: 'var(--mono)' }}>
+      <span className="pctile-val" style={{ textAlign: 'right', fontFamily: 'var(--mono)' }}>
         <strong>{fmt(value)}</strong>
         <span className="muted"> · Ø {fmt(avg)} · Perzentil {pct.toFixed(0)}%</span>
       </span>
@@ -1276,7 +1276,7 @@ function SkaterChart({ seasons }) {
 
   return (
     <div style={{ overflowX: 'auto' }}>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ minWidth: 480 }}>
+      <svg viewBox={`0 0 ${W} ${H}`} className="fit-chart">
         <line x1={pad.l} x2={W - pad.r} y1={y(0)} y2={y(0)} stroke="var(--border)" />
         <path d={line('gpg')} fill="none" stroke="var(--text-faint)" strokeWidth="2" />
         <path d={line('apg')} fill="none" stroke="var(--text-dim)" strokeWidth="2" />
@@ -1307,7 +1307,7 @@ function GoalieChart({ seasons }) {
 
   return (
     <div style={{ overflowX: 'auto' }}>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ minWidth: 480 }}>
+      <svg viewBox={`0 0 ${W} ${H}`} className="fit-chart">
         <path d={line} fill="none" stroke="var(--accent)" strokeWidth="2.5" />
         {rows.map((r, i) => r.svPct != null && (
           <circle key={r.season} cx={x(i)} cy={y(r.svPct)} r="3" fill="var(--accent)" />
@@ -1332,7 +1332,7 @@ function ImpactChart({ rows }) {
 
   return (
     <div style={{ overflowX: 'auto' }}>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ minWidth: 480 }}>
+      <svg viewBox={`0 0 ${W} ${H}`} className="fit-chart">
         <line x1={pad.l} x2={W - pad.r} y1={y(50)} y2={y(50)} stroke="var(--border)" strokeDasharray="4 4" />
         <path d={line} fill="none" stroke="var(--accent)" strokeWidth="2.5" />
         {rows.map((r, i) => <circle key={r.season} cx={x(i)} cy={y(r.impact.score)} r="3" fill="var(--accent)" />)}
@@ -1364,7 +1364,7 @@ function MarketValueHistoryChart({ history }) {
 
   return (
     <div style={{ overflowX: 'auto' }}>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ minWidth: 480 }}>
+      <svg viewBox={`0 0 ${W} ${H}`} className="fit-chart">
         <line x1={pad.l} x2={W - pad.r} y1={y(yMin)} y2={y(yMin)} stroke="var(--border)" />
         <text x={pad.l - 8} y={y(yMax) + 3} fontSize="9.5" fill="var(--text-dim)" textAnchor="end">{Math.round(yMax / 1000)}k</text>
         <text x={pad.l - 8} y={y(yMin) + 3} fontSize="9.5" fill="var(--text-dim)" textAnchor="end">{Math.round(yMin / 1000)}k</text>

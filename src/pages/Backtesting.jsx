@@ -273,7 +273,7 @@ function ReliabilityChart({ buckets, ece }) {
 
   return (
     <div style={{ overflowX: 'auto' }}>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ minWidth: 320, maxWidth: 560 }}>
+      <svg viewBox={`0 0 ${W} ${H}`} className="fit-chart" style={{ maxWidth: 560 }}>
         {[0, 0.25, 0.5, 0.75, 1].map((v) => (
           <g key={v}>
             <line x1={x(v)} x2={x(v)} y1={pad.t} y2={H - pad.b} stroke="var(--border)" strokeWidth="0.5" />

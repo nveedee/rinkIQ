@@ -245,6 +245,34 @@ p { margin: 0 0 10px; }
   box-shadow: 0 0 0 1px var(--border, rgba(0,0,0,0.08));
 }
 
+/* Responsive Diagramme: feste Mindestbreite auf Desktop (Lesbarkeit), aber auf
+   schmalen Screens darf das SVG auf Containerbreite schrumpfen - die viewBox
+   skaliert den Inhalt mit, verhindert horizontalen Seiten-Overflow durch feste
+   min-width. Ersetzt frühere inline `style={{ minWidth: 480/520 }}`. */
+svg.fit-chart { width: 100%; max-width: 100%; height: auto; display: block; }
+
+/* Tabellen-Spalten, die auf schmalen Screens ausgeblendet werden (zentral über
+   SortableTable gesetzt). Daten bleiben auf grösseren Screens + Detailseiten
+   erhalten - nur die Darstellung reduziert sich auf die wichtigsten Spalten. */
+@media (max-width: 560px) { .hide-sm { display: none !important; } }
+
+/* Mobil: Flex-Zeilen dürfen ihre Kinder schrumpfen lassen, damit lange Labels
+   und Werte innerhalb der Zeile umbrechen, statt horizontalen Overflow zu
+   erzeugen (betrifft dichte Stat-Zeilen auf Spieler-/Matchup-Detailseiten).
+   Desktop-Layout bleibt unberührt. */
+@media (max-width: 600px) {
+  .row > *, .grid > * { min-width: 0; }
+}
+
+/* Perzentil-Vergleichszeile (PlayerDetail): Wert-Spalte hat auf Desktop eine
+   feste Breite zur Ausrichtung; auf schmalen Screens bricht der Wert in eine
+   eigene Zeile um, damit nichts horizontal überläuft (alle Daten bleiben). */
+.pctile-val { min-width: 230px; }
+@media (max-width: 600px) {
+  .pctile-row { flex-wrap: wrap; }
+  .pctile-row .pctile-val { min-width: 0; flex-basis: 100%; text-align: left !important; margin-top: 2px; }
+}
+
 /* Globaler Footer (Rechts-/Infolinks + Hinweis) */
 .site-footer { margin-top: 48px; border-top: 1px solid var(--border); }
 .site-footer-inner {
@@ -353,9 +381,9 @@ a.card:hover {
 .card h2, .card h3 { margin: 0 0 12px; }
 
 .grid { display: grid; gap: 14px; }
-.grid-2 { grid-template-columns: repeat(2, 1fr); }
-.grid-3 { grid-template-columns: repeat(3, 1fr); }
-.grid-4 { grid-template-columns: repeat(4, 1fr); }
+.grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 
 /* ---------- Stat strip (kompakte Kennzahlenzeile) ---------- */
 .stat-strip {
@@ -1176,7 +1204,10 @@ td.num strong, th.num strong { font-weight: 800; }
   .page-head { gap: 10px; }
   .page-head h1 { font-size: 17px; }
   .card-pad { padding: 13px 14px; }
-  .tiles { grid-template-columns: repeat(2, 1fr); }
+  /* !important schlägt bewusst inline gesetzte gridTemplateColumns (z.B.
+     repeat(4,1fr) in MatchupDetail/PlayerDetail), damit Stat-Kacheln auf dem
+     Handy nie mehr als 2 Spalten erzwingen und so keinen Overflow erzeugen. */
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
   .grid-4 { grid-template-columns: 1fr; }
   .stat-tile .value { font-size: 19px; }
   thead th, tbody td { padding: 7px 7px; }

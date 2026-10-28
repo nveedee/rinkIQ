@@ -104,7 +104,7 @@ export function SortableTable({ columns, rows, initialSort, initialDir = 'desc',
             {columns.map((c) => (
               <th
                 key={c.key}
-                className={[c.left ? 'left' : '', c.num ? 'num' : '', c.noSort ? '' : 'sortable'].join(' ')}
+                className={[c.left ? 'left' : '', c.num ? 'num' : '', c.noSort ? '' : 'sortable', c.hideSm ? 'hide-sm' : ''].join(' ')}
                 onClick={() => clickHead(c)}
                 title={c.title}
               >
@@ -118,7 +118,7 @@ export function SortableTable({ columns, rows, initialSort, initialDir = 'desc',
           {pageRows.map((row, i) => (
             <tr key={rowKey ? rowKey(row) : i}>
               {columns.map((c) => (
-                <td key={c.key} className={[c.left ? 'left' : '', c.num ? 'num' : '', c.className || ''].join(' ')}>
+                <td key={c.key} className={[c.left ? 'left' : '', c.num ? 'num' : '', c.hideSm ? 'hide-sm' : '', c.className || ''].join(' ')}>
                   {c.render ? c.render(row, i) : row[c.key]}
                 </td>
               ))}

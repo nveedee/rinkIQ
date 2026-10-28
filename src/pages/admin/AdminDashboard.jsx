@@ -51,7 +51,7 @@ export default function AdminDashboard() {
         <Tile label="Prognosen" value={c ? c.predictions : '…'} />
       </div>
 
-      <div className="grid-2" style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', marginBottom: 20 }}>
+      <div className="grid-2" style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(min(300px, 100%), 1fr))', marginBottom: 20 }}>
         <div className="card card-pad">
           <h2 style={{ marginTop: 0 }}>Datenquellen</h2>
           <div className="row" style={{ justifyContent: 'space-between' }}>

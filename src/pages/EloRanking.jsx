@@ -199,7 +199,7 @@ function EloChart({ history, teams, ranking, start }) {
       </div>
 
       <div style={{ overflowX: 'auto' }}>
-        <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ minWidth: 520 }}>
+        <svg viewBox={`0 0 ${W} ${H}`} className="fit-chart">
           {ticks.map((tk) => (
             <g key={tk}>
               <line x1={pad.l} x2={W - pad.r} y1={y(tk)} y2={y(tk)} stroke="var(--border)" />

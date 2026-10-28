@@ -98,7 +98,7 @@ export default function PowerRankings() {
       </div>
 
       <div className="section-label">Detaillierte Auswertung</div>
-      <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>
+      <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(320px, 100%), 1fr))' }}>
         {rankings.map((r) => (
           <div key={r.team.id} className="card card-pad">
             <div className="row spread mb">
