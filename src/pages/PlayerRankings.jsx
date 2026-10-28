@@ -16,7 +16,7 @@ import { useData } from '../DataContext.jsx'
 import { TeamBadge, SortableTable, MarketValueTrend, SectionHeader, Empty } from '../components/ui.jsx'
 import { fmtPct, fmtNum, plusMinusStr, fmtChf, isFinalGame } from '../stats.js'
 import {
-  usePlayerHistory, usePositionBaselines, getPlayerSeasons, classifyTrend, isBreakout, isDeclining,
+  usePlayerHistory, usePositionBaselines, getPlayerSeasons, classifyTrend, isBreakout,
   buildCurrentSeasonRecord, computeImpactScore, POSITION_LABEL,
 } from '../playerHistory.js'
 import { computeLeagueMarketMovers, hasEnoughHistoryForChart } from '../marketValueHistory.js'
@@ -185,32 +185,24 @@ export default function PlayerRankings() {
     shutouts: topN(leagueGoalies.filter((r) => r.shutouts > 0), (r) => r.player, (r) => r.shutouts),
   }), [leagueSkaters, leagueGoalies, leagueSkatersWithImpact, leagueSkatersWithRating, leaguePlayersWithMv])
 
-  // 4) Form & Entwicklung: Breakout/Declining - rein aus der Trend-
-  // Klassifikation (src/playerHistory.js::classifyTrend) abgeleitet, keine
-  // subjektive Bewertung, unverändert gegenüber der bisherigen Logik. Bezieht
-  // seit dem Player Tracker auch die LAUFENDE Saison mit ein (via
-  // buildCurrentSeasonRecord aus bereits abgeschlossenen Spielen - kein
-  // Leakage). Nur Spieler mit >=3 gespielten Saisons werden klassifiziert.
-  const { breakouts, declines } = useMemo(() => {
-    if (!playerHistoryData) return { breakouts: [], declines: [] }
-    const b = [], d = []
+  // Breakout-Erkennung - nur noch für die Insight-Kachel "Stärkster Breakout"
+  // (die frühere Sektion "Form & Entwicklung" wurde entfernt). Trend-
+  // Klassifikation unverändert aus src/playerHistory.js::classifyTrend; bezieht
+  // auch die laufende Saison leak-frei mit ein (buildCurrentSeasonRecord).
+  const breakouts = useMemo(() => {
+    if (!playerHistoryData) return []
+    const b = []
     for (const p of data.players) {
       if (p.position === 'G') continue
       const seasons = getPlayerSeasons(playerHistoryData, p.id)
       const current = buildCurrentSeasonRecord(statById[p.id], p, currentSeasonLabel)
       const trend = classifyTrend(current ? [...seasons, current] : seasons)
-      if (!trend) continue
-      const impact = baselines ? computeImpactScore(seasons, POSITION_LABEL[p.position], baselines) : null
-      const team = data.teams.find((t) => t.id === p.teamId)
-      const entry = { player: p, team, trend, impact }
-      if (isBreakout(trend)) b.push(entry)
-      else if (isDeclining(trend)) d.push(entry)
+      if (!trend || !isBreakout(trend)) continue
+      b.push({ player: p, trend })
     }
     b.sort((a, b2) => b2.trend.ratio - a.trend.ratio)
-    d.sort((a, b2) => a.trend.ratio - b2.trend.ratio)
-    // Mehr als die Top 5 behalten: die TrendGroup-Liste lässt sich aufklappen.
-    return { breakouts: b.slice(0, 20), declines: d.slice(0, 20) }
-  }, [data.players, data.teams, playerHistoryData, statById, currentSeasonLabel, baselines])
+    return b
+  }, [data.players, playerHistoryData, statById, currentSeasonLabel])
 
   // 5) Market Analytics. mvRisers/mvFallers: Richtung aus marketValueTrend
   // (NL-API liefert nur -1/0/1, keine Delta-Höhe) - Fallback, solange
@@ -488,20 +480,6 @@ export default function PlayerRankings() {
         </div>
       )}
 
-      {/* 4) Form & Entwicklung */}
-      {(breakouts.length > 0 || declines.length > 0) && (
-        <>
-          <SectionHeader
-            title="Form & Entwicklung"
-            caption="Vergleich der jüngsten ausgewerteten Saison (mind. 10 Spiele - das kann die laufende Saison 2026/27 sein, sobald ein Spieler dort ≥10 Spiele erreicht hat, sonst die letzte abgeschlossene Saison) gegen den Karriere-Schnitt davor (mind. 3 gespielte Saisons insgesamt)."
-          />
-          <div className="grid grid-2 mb" style={{ gap: 14 }}>
-            <TrendGroup title="Breakout" entries={breakouts} tone="good" currentSeasonLabel={currentSeasonLabel} />
-            <TrendGroup title="Declining" entries={declines} tone="bad" currentSeasonLabel={currentSeasonLabel} />
-          </div>
-        </>
-      )}
-
       {/* 5) Market Watch - eine gemeinsame Karte statt drei unabhängiger
           Tabellen, mit Sparkline pro Zeile wo genug Historie vorhanden ist. */}
       {(topMarketValues.length > 0 || leagueMovers.ready || mvRisers.length > 0 || mvFallers.length > 0) && (
@@ -595,78 +573,6 @@ function LeaderCard({ title, entries, formatValue }) {
           </Link>
         ))}
       </div>
-    </div>
-  )
-}
-
-// Form & Entwicklung: kompakte Player-Cards statt grosser Tabellen. Zeigt
-// IMMER absolute UND prozentuale Veränderung nebeneinander (eine grosse
-// %-Zahl allein kann bei kleinen Basiswerten irreführen) sowie einen klaren
-// "geringe Stichprobe"-Hinweis, wenn der Vergleichswert aus der noch
-// laufenden aktuellen Saison stammt (per Definition weniger Spiele als eine
-// abgeschlossene Saison) - reine Anzeige, classifyTrend()/trend-Werte
-// unverändert aus playerHistory.js übernommen.
-const TREND_PREVIEW = 5
-
-function TrendGroup({ title, entries, tone, currentSeasonLabel }) {
-  const [expanded, setExpanded] = useState(false)
-  const shown = expanded ? entries : entries.slice(0, TREND_PREVIEW)
-  const rest = entries.length - TREND_PREVIEW
-  return (
-    <div className="card">
-      <div className="card-pad" style={{ paddingBottom: 6 }}>
-        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
-          <div className="section-label" style={{ margin: 0 }}>{title}</div>
-          {entries.length > 0 && <span className="muted" style={{ fontSize: 11 }}>{entries.length}</span>}
-        </div>
-      </div>
-      {entries.length === 0 ? (
-        <div className="card-pad muted" style={{ fontSize: 12.5, paddingTop: 0 }}>Keine {tone === 'good' ? 'Kandidaten' : 'Auffälligkeiten'}.</div>
-      ) : (
-        <div className="card-pad" style={{ paddingTop: 0 }}>
-          {shown.map(({ player, team, trend, impact }) => {
-            const abs = trend.latestPpg - trend.careerPpgExclLatest
-            const pct = (trend.ratio - 1) * 100
-            const smallSample = trend.latestSeason === currentSeasonLabel
-            const gp = trend.latestGp
-            const pts = trend.latestPoints
-            return (
-              <div key={player.id} className="row" style={{ padding: '9px 0', borderBottom: '1px solid var(--border)', gap: 10, alignItems: 'center' }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="row gap-sm" style={{ flexWrap: 'wrap' }}>
-                    <Link to={`/players/${player.id}`} style={{ fontWeight: 700 }}>{player.name}</Link>
-                    {smallSample && (
-                      <span className="chip" title="Basiert auf der noch laufenden, unvollständigen Saison - nicht auf einer abgeschlossenen">laufende Saison</span>
-                    )}
-                  </div>
-                  <div className="muted" style={{ fontSize: 11.5 }}>
-                    Saison {trend.latestSeason} · {team ? team.short : '–'} · {POSITION_LABEL[player.position]} · Impact {impact ? impact.score.toFixed(1) : '–'}
-                  </div>
-                  {gp != null && (
-                    <div className="muted" style={{ fontSize: 11 }}>
-                      {gp} {gp === 1 ? 'Spiel' : 'Spiele'}, {pts} {pts === 1 ? 'Punkt' : 'Punkte'}
-                      {trend.priorSeasonsCount != null && <> · Karriere-Vergleich aus {trend.priorSeasonsCount} {trend.priorSeasonsCount === 1 ? 'Saison' : 'Saisons'}</>}
-                    </div>
-                  )}
-                </div>
-                <div style={{ textAlign: 'right', flex: 'none' }}>
-                  <div style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
-                    <strong>{trend.latestPpg.toFixed(2)}</strong> <span className="muted">P/GP ← {trend.careerPpgExclLatest.toFixed(2)}</span>
-                  </div>
-                  <div className={tone} style={{ fontWeight: 800, fontSize: 13, whiteSpace: 'nowrap' }}>
-                    {abs >= 0 ? '+' : ''}{abs.toFixed(2)} ({pct >= 0 ? '+' : ''}{pct.toFixed(0)}%)
-                  </div>
-                </div>
-              </div>
-            )
-          })}
-          {rest > 0 && (
-            <button className="btn ghost sm" style={{ marginTop: 10 }} onClick={() => setExpanded((v) => !v)}>
-              {expanded ? 'Weniger anzeigen' : `${rest} weitere anzeigen`}
-            </button>
-          )}
-        </div>
-      )}
     </div>
   )
 }
