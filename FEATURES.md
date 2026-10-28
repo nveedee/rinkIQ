@@ -269,3 +269,45 @@ Relevant env vars (all optional except the hash): `ADMIN_PASSWORD_HASH` (require
 - **Open (public):** `GET /api/public/data` (curated DB projection — teams/players/games, whitelisted settings, the frozen pre-game `predictions` and the `projectionSnapshot`; **excludes** only the personal `topscorerRoster`), `GET /api/public/status` (last successful update time only), `GET /api/auth/session`, and the read-only live/replay endpoints.
 - **Admin only (session + CSRF on writes):** `GET /api/data`, `PUT /api/settings`, `POST/PUT/DELETE /api/teams|players`, `POST /api/import|reset|sync|sync-nl`, `GET /api/sync-status|sync-nl-status`, `GET /api/export`, `GET /api/admin/system`.
 - **Auth:** `POST /api/auth/login` (rate-limited), `POST /api/auth/logout`.
+
+---
+
+# Web-Analytics (PostHog)
+
+Optionale, datensparsame Besucher-Analytics über die offizielle `posthog-js`-Bibliothek. Zentral in `src/analytics.js` (einmalige Initialisierung in `src/main.jsx`), Konfigurationsauflösung testbar in `src/analyticsConfig.js`.
+
+**Grundprinzip:** Ohne gesetzten Key ist Analytics vollständig deaktiviert — die App läuft normal weiter. Alle PostHog-Aufrufe sind in `try/catch` gekapselt; ein nicht erreichbarer PostHog-Host beeinträchtigt die Website nicht (verifiziert).
+
+**Was erfasst wird:**
+- **Seitenaufrufe** (`$pageview`) — manuell bei jeder clientseitigen Router-Navigation (ein Event pro Navigation, keine Doppel-Pageviews, da PostHogs `capture_pageview` aus ist). Deckt alle Bereiche ab, da jeder Bereich eine eigene Route ist: Tabelle `/standings`, Spielplan `/schedule`, Playoff Odds `/playoff-odds`, ELO `/elo`, Power `/power`, Spieler `/players`(+`/players/:id`), Torhüter `/goalies`, Teams `/teams`(+`/teams/:id`), H2H `/head-to-head`, Topscorer `/topscorers`, Matchup `/matchup/:id`, Startseite `/`.
+- **Einstiegsseite & Referrer** — automatisch von PostHog aus `document.referrer`/URL (`$referrer`, `$referring_domain`, `$pathname`), keine Zusatzkonfiguration.
+- **Interaktions-Event:** `schedule_filter_selected` mit `{ filter: 'all'|'past'|'upcoming' }` (Spielplan-Filterwechsel). Über `track(name, props)` aus `src/analytics.js` lassen sich bei Bedarf weitere, nicht-sensible Events ergänzen.
+
+**Datenschutz-Einstellungen (in `src/analytics.js`):**
+- `autocapture: false` — keine automatische Klick-/Eingabe-Erfassung (Login-/Formularfelder werden gar nicht berührt).
+- `disable_session_recording: true`, `disable_surveys: true`, `capture_performance: false` — keine Session Recordings/Heatmaps/Surveys.
+- `respect_dnt: true` — „Do Not Track" des Browsers wird respektiert.
+- `person_profiles: 'identified_only'` — keine Personenprofile für anonyme Besucher (es wird niemand identifiziert) → datensparsam und quota-schonend.
+- Es werden **keine** Passwörter, Login-Daten oder Formularinhalte erfasst. Erfasst werden Pfade (inkl. interner Team-/Spieler-IDs als Inhalts-Referenz, keine Besucher-PII) und die obigen Standard-Properties.
+
+> ⚠ Hinweis (keine Rechtsberatung): Ob für Schweizer/EU-Besucher eine **Cookie-/Tracking-Einwilligung** nötig ist, hängt von der konkreten Konfiguration ab und ist rechtlich zu prüfen. Diese Integration behauptet keine vollständige Datenschutzkonformität. Für einen einwilligungsfreien Betrieb kämen PostHog-Optionen wie `persistence: 'memory'` (keine Cookies) bzw. ein Consent-Gate in Frage — bewusst noch nicht aktiviert, da von der rechtlichen Einschätzung abhängig.
+
+**Tracking deaktivieren:**
+- **Komplett:** `VITE_POSTHOG_KEY` leer lassen / nicht setzen (Default) → kein Init, keine Requests.
+- **Pro Besucher:** Browser-Einstellung „Do Not Track" (wird respektiert).
+- **Abschalten einer laufenden Instanz:** Key in Render entfernen und neu bauen/deployen.
+
+**Konfiguration (Umgebungsvariablen, `VITE_`-Präfix = im Frontend verfügbar, Build-Zeit):**
+- `VITE_POSTHOG_KEY` — öffentlicher Project-API-Key (`phc_…`, **kein** geheimer/Privat-Key).
+- `VITE_POSTHOG_HOST` — Region-Host, Default `https://us.i.posthog.com` (Region des RinkIQ-PostHog-Projekts). Muss zur Projekt-Region passen; EU-Projekt: `https://eu.i.posthog.com`.
+
+**Lokal:** `.env.example` nach `.env` kopieren und Werte eintragen (`.env` ist in `.gitignore`, wird nie committet).
+
+**Render einrichten:**
+1. Render-Dashboard → Service **nl-tracker/rinkIQ** → **Environment**.
+2. **Add Environment Variable**: Key `VITE_POSTHOG_KEY`, Value der `phc_…`-Key aus PostHog (Project Settings → Project API Key).
+3. Optional (Default ist bereits US): `VITE_POSTHOG_HOST` = `https://us.i.posthog.com`. Nur für ein EU-Projekt auf `https://eu.i.posthog.com` setzen.
+4. Speichern → Render baut neu. Wichtig: `VITE_*`-Variablen werden **zur Build-Zeit** in das Frontend-Bundle eingebacken (verifiziert), daher muss nach dem Setzen/Ändern ein **neuer Build/Deploy** laufen.
+5. Kein geheimer/Privat-API-Key in Render oder im Frontend verwenden — nur der öffentliche Project-Key.
+
+**Tests:** `npm run test:analytics` (`src/analyticsConfig.test.js`) prüft die Konfigurationsauflösung (aktiv nur mit Key, Default-/Custom-Host, leerer Key = deaktiviert).

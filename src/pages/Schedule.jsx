@@ -7,6 +7,7 @@ import { applyRestAdjustment, computeRestAdjustment, DEFAULT_BACK_TO_BACK_PENALT
 import { isFinalGame } from '../stats.js'
 import { getPregamePrediction } from '../pregamePrediction.js'
 import { compareKickoffAsc, compareKickoffDesc, sortGamesPastThenUpcoming } from '../scheduleSort.js'
+import { track } from '../analytics.js'
 import { useLiveGamesList } from '../liveGameClient.js'
 import LiveNowSection from '../components/LiveNowSection.jsx'
 
@@ -84,6 +85,7 @@ export default function Schedule() {
   function selectFilter(key) {
     setAllFilter(key)
     setVisibleCount(ALL_GAMES_PAGE_SIZE)
+    track('schedule_filter_selected', { filter: key }) // nur der Filtername, keine PII
   }
 
   // Pre-Game-Prognose über die zentrale Single Source of Truth

@@ -5,6 +5,12 @@ dist
 .vscode
 .idea
 
+# Lokale Umgebungsvariablen (z.B. PostHog-Key) - NIE committen. .env.example
+# ist die versionierte Vorlage.
+.env
+.env.local
+.env.*.local
+
 # Laufzeit-/generierte Daten (werden aus seed.json + Auto-Sync neu erzeugt)
 server/data/db.json
 server/data/*.pretest-backup

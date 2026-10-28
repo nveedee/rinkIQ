@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Routes, Route, Navigate, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useData } from './DataContext.jsx'
 import { useAuth } from './authContext.jsx'
+import { capturePageview } from './analytics.js'
 import { ToastHost } from './components/ui.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 
@@ -276,7 +277,17 @@ function AppShell() {
   )
 }
 
+// Ein Pageview pro (clientseitiger) Navigation - manuell, da capture_pageview
+// in PostHog deaktiviert ist (vermeidet Doppel-Pageviews). No-Op ohne Analytics.
+function usePageviews() {
+  const location = useLocation()
+  useEffect(() => {
+    capturePageview()
+  }, [location.pathname, location.search])
+}
+
 export default function App() {
+  usePageviews()
   const { authReady } = useAuth()
   if (!authReady) {
     return <div className="app"><main className="main"><div className="muted">Lädt…</div></main></div>
