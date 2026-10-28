@@ -23,7 +23,8 @@
     "test:prediction": "node --test src/pregamePrediction.test.js",
     "test:auth": "node --test server/auth.test.js",
     "test:feature": "node --test src/featureConfig.test.js",
-    "test:legal": "node --test src/legalPages.test.js"
+    "test:legal": "node --test src/legalPages.test.js",
+    "test:schedule": "node --test src/scheduleSort.test.js"
   },
   "dependencies": {
     "express": "^4.19.2",

@@ -6,6 +6,7 @@ import { homeWinProbability } from '../elo.js'
 import { applyRestAdjustment, computeRestAdjustment, DEFAULT_BACK_TO_BACK_PENALTY } from '../restDays.js'
 import { isFinalGame } from '../stats.js'
 import { getPregamePrediction } from '../pregamePrediction.js'
+import { compareKickoffAsc, compareKickoffDesc } from '../scheduleSort.js'
 import { useLiveGamesList } from '../liveGameClient.js'
 import LiveNowSection from '../components/LiveNowSection.jsx'
 
@@ -44,7 +45,7 @@ export default function Schedule() {
   const upcoming = useMemo(
     () => data.games
       .filter((g) => g.status === 'scheduled')
-      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.time || '').localeCompare(b.time || ''))),
+      .sort(compareKickoffAsc),
     [data.games]
   )
 
@@ -66,15 +67,18 @@ export default function Schedule() {
   const [allFilter, setAllFilter] = useState('all')
   const [visibleCount, setVisibleCount] = useState(ALL_GAMES_PAGE_SIZE)
 
-  const allGamesSorted = useMemo(
-    () => [...data.games].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.time || '').localeCompare(b.time || ''))),
-    [data.games]
-  )
-  const allGamesByFilter = useMemo(() => ({
-    all: allGamesSorted,
-    past: allGamesSorted.filter(isFinalGame),
-    upcoming: allGamesSorted.filter((g) => !isFinalGame(g)),
-  }), [allGamesSorted])
+  // "Vergangen" und "Alle" absteigend (zuletzt ausgetragenes/spätestes Spiel
+  // zuerst), "Kommend" aufsteigend (nächstes Spiel zuerst). Sortierung zentral
+  // über src/scheduleSort.js (rohe Datums-/Zeitwerte, stabil).
+  const allGamesByFilter = useMemo(() => {
+    const asc = [...data.games].sort(compareKickoffAsc)
+    const desc = [...data.games].sort(compareKickoffDesc)
+    return {
+      all: desc,
+      past: desc.filter(isFinalGame),
+      upcoming: asc.filter((g) => !isFinalGame(g)),
+    }
+  }, [data.games])
   const allGamesFiltered = allGamesByFilter[allFilter]
   const allGamesVisible = allGamesFiltered.slice(0, visibleCount)
 
