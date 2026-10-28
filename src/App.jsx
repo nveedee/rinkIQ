@@ -30,7 +30,12 @@ import MatchupDetail from './pages/MatchupDetail.jsx'
 import Login from './pages/Login.jsx'
 import AdminDashboard from './pages/admin/AdminDashboard.jsx'
 import SystemStatus from './pages/admin/SystemStatus.jsx'
+import Impressum from './pages/legal/Impressum.jsx'
+import Datenschutz from './pages/legal/Datenschutz.jsx'
+import Nutzungsbedingungen from './pages/legal/Nutzungsbedingungen.jsx'
+import QuellenMethodik from './pages/legal/QuellenMethodik.jsx'
 import SyncStatus from './components/SyncStatus.jsx'
+import Footer from './components/Footer.jsx'
 // DEV-ONLY: Live-Replay-Testseite (siehe DevLiveReplay.jsx-Kopfkommentar) -
 // lazy() statt statischem import, damit Vite die Komponente in einen EIGENEN
 // Chunk auslagert, der im Produktions-Build nie angefordert wird.
@@ -195,6 +200,12 @@ function AppRoutes() {
         {/* /games ist in /schedule aufgegangen - Redirect für alte Links */}
         <Route path="/games" element={<Navigate to="/schedule" replace />} />
 
+        {/* Rechts-/Infotexte: immer öffentlich, ohne Anmeldung erreichbar */}
+        <Route path="/impressum" element={<Impressum />} />
+        <Route path="/datenschutz" element={<Datenschutz />} />
+        <Route path="/nutzungsbedingungen" element={<Nutzungsbedingungen />} />
+        <Route path="/quellen-methodik" element={<QuellenMethodik />} />
+
         {/* Nur Admin (experimentell / teure Rechnung / Verwaltung) */}
         <Route path="/fair-odds" element={<RequireAdmin><FairOdds /></RequireAdmin>} />
         <Route path="/fan-analytics" element={<RequireAdmin><FanAnalytics /></RequireAdmin>} />
@@ -259,6 +270,7 @@ function AppShell() {
         )}
         {!loading && !error && <AppRoutes />}
       </main>
+      <Footer />
       <ToastHost />
     </div>
   )

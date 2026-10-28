@@ -1,4 +1,5 @@
 import { useData } from '../DataContext.jsx'
+import Disclaimer from '../components/Disclaimer.jsx'
 
 // ---------------------------------------------------------------------------
 // Öffentliche Playoff-/Meister-Wahrscheinlichkeiten - liest AUSSCHLIESSLICH
@@ -48,6 +49,8 @@ export default function PublicPlayoffOdds() {
         Modell-Projektion aus {snap.runs?.toLocaleString('de-CH')} simulierten Saisonverläufen.
         {stand && <> Datenstand: <strong>{stand}</strong>.</>} Keine Live-Berechnung – gespeicherter Snapshot.
       </div>
+
+      <Disclaimer />
 
       <div className="card" style={{ overflowX: 'auto' }}>
         <table className="table">

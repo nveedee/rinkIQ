@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, useLocation, Navigate, Link } from 'react-router-dom'
 import { useAuth } from '../authContext.jsx'
+import { LEGAL_PAGES } from '../legalPages.js'
 
 // ---------------------------------------------------------------------------
 // Admin-Login. Serverseitig abgesichert (server/auth.js): Rate-Limit,
@@ -85,6 +86,9 @@ export default function Login() {
 
         <div className="muted" style={{ textAlign: 'center', marginTop: 16 }}>
           <Link to="/">← Zurück zur öffentlichen Ansicht</Link>
+        </div>
+        <div className="muted" style={{ textAlign: 'center', marginTop: 12, display: 'flex', gap: 14, justifyContent: 'center', flexWrap: 'wrap', fontSize: 12 }}>
+          {LEGAL_PAGES.map((p) => <Link key={p.path} to={p.path}>{p.label}</Link>)}
         </div>
       </main>
     </div>
