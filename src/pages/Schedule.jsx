@@ -6,7 +6,7 @@ import { homeWinProbability } from '../elo.js'
 import { applyRestAdjustment, computeRestAdjustment, DEFAULT_BACK_TO_BACK_PENALTY } from '../restDays.js'
 import { isFinalGame } from '../stats.js'
 import { getPregamePrediction } from '../pregamePrediction.js'
-import { compareKickoffAsc, compareKickoffDesc } from '../scheduleSort.js'
+import { compareKickoffAsc, compareKickoffDesc, sortGamesPastThenUpcoming } from '../scheduleSort.js'
 import { useLiveGamesList } from '../liveGameClient.js'
 import LiveNowSection from '../components/LiveNowSection.jsx'
 
@@ -67,18 +67,17 @@ export default function Schedule() {
   const [allFilter, setAllFilter] = useState('all')
   const [visibleCount, setVisibleCount] = useState(ALL_GAMES_PAGE_SIZE)
 
-  // "Vergangen" und "Alle" absteigend (zuletzt ausgetragenes/spätestes Spiel
-  // zuerst), "Kommend" aufsteigend (nächstes Spiel zuerst). Sortierung zentral
-  // über src/scheduleSort.js (rohe Datums-/Zeitwerte, stabil).
-  const allGamesByFilter = useMemo(() => {
-    const asc = [...data.games].sort(compareKickoffAsc)
-    const desc = [...data.games].sort(compareKickoffDesc)
-    return {
-      all: desc,
-      past: desc.filter(isFinalGame),
-      upcoming: asc.filter((g) => !isFinalGame(g)),
-    }
-  }, [data.games])
+  // "Vergangen": abgeschlossene Spiele absteigend (zuletzt ausgetragenes zuerst).
+  // "Kommend": kommende Spiele aufsteigend (nächstes Spiel zuerst).
+  // "Alle": zuerst die vergangenen (absteigend), danach die kommenden
+  // (aufsteigend) - siehe sortGamesPastThenUpcoming(). Sortierung zentral über
+  // src/scheduleSort.js (rohe Datums-/Zeitwerte, stabil); abgeschlossen/kommend
+  // über isFinalGame, nicht über das Datum.
+  const allGamesByFilter = useMemo(() => ({
+    all: sortGamesPastThenUpcoming(data.games, isFinalGame),
+    past: data.games.filter(isFinalGame).sort(compareKickoffDesc),
+    upcoming: data.games.filter((g) => !isFinalGame(g)).sort(compareKickoffAsc),
+  }), [data.games])
   const allGamesFiltered = allGamesByFilter[allFilter]
   const allGamesVisible = allGamesFiltered.slice(0, visibleCount)
 
