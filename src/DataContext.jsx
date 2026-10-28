@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react'
 import { api } from './api.js'
+import { useAuth } from './authContext.jsx'
 import { computeStandings, computePlayerStats } from './stats.js'
 import { computeElo, ELO_CONFIG } from './elo.js'
 import { usePreseasonElo, computePreseasonRatings } from './preseasonElo.js'
@@ -8,14 +9,19 @@ import { computeMarketValuePrior, DEFAULT_PRIOR_SPREAD } from './marketValuePrio
 const DataContext = createContext(null)
 
 export function DataProvider({ children }) {
+  const { authReady, isAdmin } = useAuth()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const preseasonSeasonEnd = usePreseasonElo()
 
+  // Admin erhält die vollständige DB (/api/data, geschützt), unangemeldete
+  // Besucher die kuratierte öffentliche Projektion (/api/public/data). Gleiche
+  // Grundstruktur (teams/players/games/settings) -> die abgeleiteten
+  // Berechnungen unten bleiben unverändert.
   const refresh = useCallback(async () => {
     try {
-      const d = await api.getData()
+      const d = isAdmin ? await api.getData() : await api.getPublicData()
       setData(d)
       setError(null)
     } catch (e) {
@@ -23,11 +29,13 @@ export function DataProvider({ children }) {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [isAdmin])
 
   useEffect(() => {
+    if (!authReady) return // erst laden, wenn der Session-Status feststeht
+    setLoading(true)
     refresh()
-  }, [refresh])
+  }, [authReady, refresh])
 
   // Abgeleitete Werte – neu berechnet, sobald sich die Daten ändern.
   const derived = useMemo(() => {

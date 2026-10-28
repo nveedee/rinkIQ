@@ -30,6 +30,7 @@ import { computePowerRankings } from '../../src/powerRankings.js'
 import { computeFixtures, simulateGameResult, SeededRandom } from '../../src/playoffSim.js'
 import { computeMarketValuePrior, DEFAULT_PRIOR_SPREAD } from '../../src/marketValuePrior.js'
 import { applyRestAdjustment, computeRestAdjustment, DEFAULT_BACK_TO_BACK_PENALTY } from '../../src/restDays.js'
+import { isFinalGame } from '../../src/stats.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PRESEASON_PATH = path.join(__dirname, '..', '..', 'public', 'preseason-elo.json')
@@ -114,19 +115,83 @@ function simulateFixture(fixture, seed, runs = SIMULATION_RUNS) {
   }
 }
 
-// Erstellt fehlende Prediction-Snapshots für alle noch nicht gestarteten
-// ("status: scheduled") Spiele in `db.games`, die noch keinen Eintrag in
-// `db.predictions` haben. Mutiert `db` in place (Aufrufer entscheidet, ob per
-// writeDb() persistiert wird - z.B. nicht im --dry-run). Bereits gespielte
-// Spiele werden NIE nachträglich versehen (Aufrufer muss `runSync()` den
-// Games-Update-Schritt VOR diesem Aufruf ausführen, damit frisch final
-// gewordene Spiele hier bereits korrekt ausgeschlossen sind).
+// Gemeinsame ELO-Start-Prior-Auswahl (Marktwert-Prior, sonst historisches
+// Archiv, sonst flach) - EXAKT dieselbe Priorität wie DataContext.jsx
+// (derived.eloPriorSource). Beide Snapshot-Funktionen unten nutzen diesen
+// Helfer, damit ein Snapshot garantiert mit demselben Prior entsteht, den die
+// Live-App/ELO-Seite verwendet (genau das ging zuvor auseinander).
+function resolvePrior(teams, players, settings, eloStart) {
+  const useMarketValue = settings.marketValuePriorEnabled !== false
+  const marketPrior = useMarketValue
+    ? computeMarketValuePrior(teams, players, eloStart, settings.priorSpread ?? DEFAULT_PRIOR_SPREAD)
+    : null
+  const historicalRatings = computePreseasonRatings(readPreseasonSeasonEnd(), eloStart)
+  const initialRatings = marketPrior || historicalRatings
+  const priorSource = marketPrior ? 'marketValue' : (historicalRatings ? 'historicalArchive' : 'flat')
+  return { initialRatings, priorSource }
+}
+
+// Baut EINEN Snapshot aus einem bereits berechneten Fixture + ELO-Stand.
+// Enthält die Monte-Carlo-Simulation und die Ruhetage-Anpassung, damit beide
+// Aufrufer (Live-Refresh + walk-forward-Reparatur) ein identisch geformtes
+// Snapshot-Objekt und dieselbe modelVersion erzeugen. `games` dient NUR der
+// Ruhetage-Berechnung (reine Pre-Game-Info, kein Ergebnis-Leak). `prev`
+// (optional) überträgt createdAt/seed-Kontinuität.
+function makeSnapshot({ g, fixture, eloRatings, powerByTeam, games, eloStart, seed, now, priorSource, restDaysEnabled, backToBackPenalty, prev, reconstructed = false }) {
+  const mc = simulateFixture(fixture, seed)
+  const restAdjustment = restDaysEnabled ? computeRestAdjustment(g, games, backToBackPenalty) : 0
+  const pHomeWin = restAdjustment !== 0 ? applyRestAdjustment(mc.pHomeWin, g, games, backToBackPenalty) : mc.pHomeWin
+  const snap = {
+    gameId: g.id,
+    createdAt: prev?.createdAt ?? now.toISOString(),
+    updatedAt: now.toISOString(),
+    seed,
+    date: g.date,
+    time: g.time || null,
+    homeTeamId: g.homeTeamId,
+    awayTeamId: g.awayTeamId,
+    homeWinProbability: round(pHomeWin, 4),
+    awayWinProbability: round(1 - pHomeWin, 4),
+    expectedHomeGoals: round(mc.avgHomeGoals, 2),
+    expectedAwayGoals: round(mc.avgAwayGoals, 2),
+    otProbability: round(mc.pOT, 4),
+    soProbability: round(mc.pSO, 4),
+    eloHome: Math.round(eloRatings[g.homeTeamId] ?? eloStart),
+    eloAway: Math.round(eloRatings[g.awayTeamId] ?? eloStart),
+    // Phase 1 Player-Rating-Integration (siehe src/playerRatingAdjustment.js) -
+    // separat von eloHome/eloAway geführt (Variante B), bei Default-Gewicht 0
+    // immer 0 und ohne Effekt auf pHomeWin/expectedGoals.
+    playerRatingAdjHome: round(fixture.playerRatingAdjHome, 2),
+    playerRatingAdjAway: round(fixture.playerRatingAdjAway, 2),
+    powerHome: powerByTeam[g.homeTeamId]?.powerScore ?? null,
+    powerAway: powerByTeam[g.awayTeamId]?.powerScore ?? null,
+    modelVersion: buildModelVersion(priorSource, restAdjustment !== 0),
+  }
+  // Provenienz-Markierung: dieser Snapshot wurde nachträglich walk-forward
+  // rekonstruiert (siehe rebuildFinalGameSnapshots) und ist nicht der
+  // ursprünglich zum Zeitpunkt der Erzeugung eingefrorene.
+  if (reconstructed) snap.reconstructed = true
+  return snap
+}
+
+// Pflegt die Pre-Game-Snapshots für alle noch nicht gestarteten
+// ("status: scheduled") Spiele in `db.games`. Fehlende Snapshots werden neu
+// erstellt, bereits vorhandene werden mit dem AKTUELLEN Modellstand (ELO/
+// Power/Simulation) AUFGEFRISCHT - so bleibt die Pre-Game-Prognose bis zum
+// Anpfiff aktuell, statt beim Saisonstart (als die ganze Saison schon
+// 'scheduled' war) am damaligen Start-ELO festzuhängen. Mutiert `db` in place
+// (Aufrufer entscheidet, ob per writeDb() persistiert wird - z.B. nicht im
+// --dry-run).
 //
-// Idempotent: ein `gameId` bekommt nie einen zweiten Eintrag, ein
-// bestehender Eintrag wird nie verändert (kein Update-Pfad vorhanden).
+// Einfrieren beim Anpfiff: sobald ein Spiel nicht mehr 'scheduled' ist (ge-
+// startet/final), taucht es hier nicht mehr auf und sein zuletzt vor dem Spiel
+// geschriebener Snapshot bleibt unverändert eingefroren. Der Aufrufer muss den
+// Games-Update-Schritt VOR diesem Aufruf ausführen, damit frisch final
+// gewordene Spiele bereits korrekt ausgeschlossen sind (leak-frei: die
+// Auswertung in src/predictionMetrics.js betrachtet ohnehin nur final-Spiele).
 export function ensurePredictionSnapshots(db, { now = new Date(), log } = {}) {
   if (!Array.isArray(db.predictions)) db.predictions = []
-  const existingIds = new Set(db.predictions.map((p) => p.gameId))
+  const byGameId = new Map(db.predictions.map((p) => [p.gameId, p]))
 
   const teams = db.teams || []
   const players = db.players || []
@@ -134,20 +199,13 @@ export function ensurePredictionSnapshots(db, { now = new Date(), log } = {}) {
   const settings = db.settings || {}
   const eloStart = settings.eloStart ?? ELO_CONFIG.eloStart
 
-  const pending = games.filter((g) => g.status === 'scheduled' && !existingIds.has(g.id))
-  if (pending.length === 0) return { created: 0, total: db.predictions.length }
+  const scheduled = games.filter((g) => g.status === 'scheduled')
+  if (scheduled.length === 0) return { created: 0, updated: 0, total: db.predictions.length }
 
   // ELO-Start-Prior: Marktwert-Prior (src/marketValuePrior.js), wenn aktiviert
   // und Daten vorhanden, sonst der bestehende historische Pre-Season-ELO -
   // identische Priorität wie in DataContext.jsx (derived.eloPriorSource).
-  const useMarketValue = settings.marketValuePriorEnabled !== false
-  const marketPrior = useMarketValue
-    ? computeMarketValuePrior(teams, players, eloStart, settings.priorSpread ?? DEFAULT_PRIOR_SPREAD)
-    : null
-  const preseasonSeasonEnd = readPreseasonSeasonEnd()
-  const historicalRatings = computePreseasonRatings(preseasonSeasonEnd, eloStart)
-  const initialRatings = marketPrior || historicalRatings
-  const priorSource = marketPrior ? 'marketValue' : (historicalRatings ? 'historicalArchive' : 'flat')
+  const { initialRatings, priorSource } = resolvePrior(teams, players, settings, eloStart)
 
   // Ruhetage/Back-to-back (src/restDays.js) - nur für die Einzelspiel-
   // Prognose, wirkt sich NICHT auf eloRatings/die Simulation selbst aus.
@@ -162,46 +220,102 @@ export function ensurePredictionSnapshots(db, { now = new Date(), log } = {}) {
   const powerByTeam = Object.fromEntries(power.map((p) => [p.team.id, p]))
   const fixtureByPair = new Map(fixtures.map((f) => [`${f.home}:${f.away}`, f]))
 
-  let created = 0
-  for (const g of pending) {
+  let created = 0, updated = 0
+  for (const g of scheduled) {
     const fixture = fixtureByPair.get(`${g.homeTeamId}:${g.awayTeamId}`)
     if (!fixture) continue // sollte nicht vorkommen (jedes 'scheduled'-Spiel hat ein Fixture), defensiv übersprungen
 
-    const seed = generateSeed()
-    const mc = simulateFixture(fixture, seed)
-
-    const restAdjustment = restDaysEnabled ? computeRestAdjustment(g, games, backToBackPenalty) : 0
-    const pHomeWin = restAdjustment !== 0 ? applyRestAdjustment(mc.pHomeWin, g, games, backToBackPenalty) : mc.pHomeWin
-
-    db.predictions.push({
-      gameId: g.id,
-      createdAt: now.toISOString(),
-      seed,
-      date: g.date,
-      time: g.time || null,
-      homeTeamId: g.homeTeamId,
-      awayTeamId: g.awayTeamId,
-      homeWinProbability: round(pHomeWin, 4),
-      awayWinProbability: round(1 - pHomeWin, 4),
-      expectedHomeGoals: round(mc.avgHomeGoals, 2),
-      expectedAwayGoals: round(mc.avgAwayGoals, 2),
-      otProbability: round(mc.pOT, 4),
-      soProbability: round(mc.pSO, 4),
-      eloHome: Math.round(eloRatings[g.homeTeamId] ?? eloStart),
-      eloAway: Math.round(eloRatings[g.awayTeamId] ?? eloStart),
-      // Phase 1 Player-Rating-Integration (siehe src/playerRatingAdjustment.js) -
-      // separat von eloHome/eloAway geführt (Variante B), bei Default-Gewicht 0
-      // immer 0 und ohne Effekt auf pHomeWin/expectedGoals.
-      playerRatingAdjHome: round(fixture.playerRatingAdjHome, 2),
-      playerRatingAdjAway: round(fixture.playerRatingAdjAway, 2),
-      powerHome: powerByTeam[g.homeTeamId]?.powerScore ?? null,
-      powerAway: powerByTeam[g.awayTeamId]?.powerScore ?? null,
-      modelVersion: buildModelVersion(priorSource, restAdjustment !== 0),
+    // Vorhandenen Seed wiederverwenden - solange sich das ELO nicht geändert
+    // hat, bleiben die MC-Zahlen beim Auffrischen damit exakt stabil.
+    const prev = byGameId.get(g.id)
+    const seed = prev?.seed ?? generateSeed()
+    const snapshot = makeSnapshot({
+      g, fixture, eloRatings, powerByTeam, games, eloStart, seed, now,
+      priorSource, restDaysEnabled, backToBackPenalty, prev,
     })
-    existingIds.add(g.id)
-    created++
+    if (prev) {
+      Object.assign(prev, snapshot) // bestehenden Snapshot in place auffrischen
+      updated++
+    } else {
+      db.predictions.push(snapshot)
+      byGameId.set(g.id, snapshot)
+      created++
+    }
   }
 
-  if (log && created > 0) log(`  → ${created} Prediction-Snapshot${created === 1 ? '' : 's'} neu erstellt`)
-  return { created, total: db.predictions.length }
+  if (log && (created > 0 || updated > 0)) log(`  → Prediction-Snapshots: ${created} neu, ${updated} aktualisiert`)
+  return { created, updated, total: db.predictions.length }
+}
+
+// ---------------------------------------------------------------------------
+// Einmalige Reparatur der final-Spiel-Snapshots (walk-forward).
+//
+// Hintergrund: durch den früheren create-only-Bug wurden beim ERSTEN Sync
+// ALLE Spiele der Saison auf einen Schlag mit dem damaligen Modellstand
+// (0 gespielte Spiele + historischer Prior) eingefroren und danach nie
+// aktualisiert. Für die bereits gespielten Spiele hiess das: ihre Pre-Game-
+// Prognose basierte auf dem Saisonstart-ELO statt auf dem ELO UNMITTELBAR VOR
+// dem Spiel - die Model-Performance-Auswertung (src/predictionMetrics.js) hat
+// damit effektiv ein falsch konfiguriertes Modell bewertet (Ø ~50 ELO und bis
+// zu ~140 ELO daneben, Favoritenprognosen dadurch stark verzerrt).
+//
+// Diese Funktion rekonstruiert für JEDES bereits beendete Spiel die echte
+// Pre-Game-Prognose: ELO/SOG/Power ausschliesslich aus den Spielen DAVOR
+// (chronologisch, strikt leak-frei bzgl. Ergebnissen), simuliert mit genau
+// derselben, unveränderten Produktivlogik (computeFixtures/simulateFixture)
+// und demselben Prior wie die Live-App (resolvePrior). Vorhandene Seeds werden
+// wiederverwendet -> deterministisch/idempotent.
+//
+// HINWEIS zum Prior: der Marktwert-Prior wird aus den AKTUELLEN Marktwerten
+// gebildet (historische Marktwerte je Stichtag liegen nicht vor) - exakt wie
+// im Live-Modell/DataContext. Die ELO-Fortschreibung selbst ist strikt
+// walk-forward; nur der Saison-Start-Prior trägt diese kleine, unvermeidbare
+// Anachronie, die um Grössenordnungen kleiner ist als die behobene Verzerrung.
+export function rebuildFinalGameSnapshots(db, { now = new Date(), log } = {}) {
+  if (!Array.isArray(db.predictions)) db.predictions = []
+  const byGameId = new Map(db.predictions.map((p) => [p.gameId, p]))
+
+  const teams = db.teams || []
+  const players = db.players || []
+  const games = db.games || []
+  const settings = db.settings || {}
+  const eloStart = settings.eloStart ?? ELO_CONFIG.eloStart
+  const restDaysEnabled = settings.restDaysEnabled !== false
+  const backToBackPenalty = settings.backToBackPenalty ?? DEFAULT_BACK_TO_BACK_PENALTY
+  const { initialRatings, priorSource } = resolvePrior(teams, players, settings, eloStart)
+
+  const key = (g) => g.date + (g.time || '')
+  const finalGames = games.filter(isFinalGame).sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0))
+
+  let rebuilt = 0, skipped = 0
+  for (let i = 0; i < finalGames.length; i++) {
+    const g = finalGames[i]
+    // Nur die Spiele DAVOR als 'final', das Zielspiel selbst als 'scheduled' -
+    // so erzeugt computeFixtures() ein Fixture dafür, und ELO/SOG/Power
+    // stammen ausschliesslich aus der Vergangenheit (kein Ergebnis-Leak).
+    const priorFinals = finalGames.slice(0, i)
+    const subset = [...priorFinals, { ...g, status: 'scheduled' }]
+    const { fixtures, eloRatings } = computeFixtures(teams, subset, settings, players, initialRatings)
+    const fixture = fixtures.find((f) => f.gameId === g.id)
+    if (!fixture) { skipped++; continue }
+    const power = computePowerRankings(teams, priorFinals, eloRatings, players)
+    const powerByTeam = Object.fromEntries(power.map((p) => [p.team.id, p]))
+
+    const prev = byGameId.get(g.id)
+    const seed = prev?.seed ?? generateSeed()
+    const snapshot = makeSnapshot({
+      g, fixture, eloRatings, powerByTeam, games, eloStart, seed, now,
+      priorSource, restDaysEnabled, backToBackPenalty, prev, reconstructed: true,
+    })
+    if (prev) {
+      Object.assign(prev, snapshot)
+    } else {
+      db.predictions.push(snapshot)
+      byGameId.set(g.id, snapshot)
+    }
+    rebuilt++
+  }
+
+  if (log) log(`  → ${rebuilt} final-Spiel-Snapshot${rebuilt === 1 ? '' : 's'} walk-forward rekonstruiert${skipped ? ` (${skipped} ohne Fixture übersprungen)` : ''}`)
+  return { rebuilt, skipped, total: db.predictions.length }
 }

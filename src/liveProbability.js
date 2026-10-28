@@ -131,12 +131,14 @@ export function periodTimeFromElapsed(elapsedMinutes) {
 // Live-ZEITPOSITION (reine Zeitlogik, KEINE Wahrscheinlichkeit) - bestimmt,
 // wo der "JETZT"-Marker auf der 0-60'-Regulationsachse steht.
 //
-// SIHF liefert als laufende Zeit nur ein grobes `status.percent` (0-100) sowie
-// den verbindlichen Drittel-Namen `status.name` ("1./2./3. Drittel", "Pause",
-// ...). Es gibt KEIN verifiziertes Sekunden-Countdown-Feld. Die vorherige
-// Logik leitete die X-Position allein aus `percent` ab - an einer Drittel-
-// grenze konnte die percent-Minute dadurch im falschen 20'-Fenster landen,
-// während der Name bereits das neue Drittel meldete (Marker/Uhr "veraltet").
+// SIHF liefert als laufende Zeit KEIN verlässliches Sekunden-/Countdown-Feld.
+// `status.percent` (0-100) ist grob, laggt und ist in der Praxis für ALLE
+// gleichzeitig laufenden Spiele identisch (real beobachtet: percent=83 für
+// vier verschiedene Spiele im 3. Drittel) - daraus abgeleitet zeigten alle
+// Spiele dieselbe, falsche Uhr (49:48). Die einzige VERBINDLICHE, pro Spiel
+// unterschiedliche Zeitinformation sind der Drittel-Name `status.name` sowie
+// die absoluten Spielzeit-Stempel der echten Ereignisse (Tore/Strafen,
+// "MM:SS"). Die Zeit wird deshalb aus DIESEN abgeleitet, nicht aus percent.
 // ---------------------------------------------------------------------------
 
 // Drittel-Offset (0/20/40 Minuten) aus dem VERBINDLICHEN SIHF-Drittel-Namen.
@@ -154,20 +156,30 @@ export function isIntermissionStatus(statusLabel) {
   return /pause|unterbrech|intermission/i.test(statusLabel || '')
 }
 
-// BESTÄTIGTE verstrichene Regulationszeit (Minuten) aus einem SIHF-Snapshot:
-// grobe percent-Schätzung, ABER in das vom verbindlichen Drittel-Namen
-// vorgegebene 20'-Fenster geklemmt. Dadurch liegt der Marker beim Drittel-
-// wechsel immer im richtigen Abschnitt (z.B. "3. Drittel" -> [40', 60']),
-// auch wenn `percent` noch nachhängt. Ohne Drittel-Name (Pause/unbekannt):
-// reine percent-Schätzung (kein erfundenes Fenster).
-export function regulationElapsedMinutes({ statusLabel, percent }) {
-  const pct = Number(percent)
-  const pctElapsed = Number.isFinite(pct)
-    ? Math.max(0, Math.min(REGULATION_MINUTES, (pct / 100) * REGULATION_MINUTES))
-    : 0
+// BESTÄTIGTE verstrichene Regulationszeit (Minuten) für GENAU DIESES Spiel,
+// ausschliesslich aus seinen eigenen SIHF-Daten:
+//   - `eventMinutes`: absolute Spielzeiten der echten Tore/Strafen dieses
+//     Spiels (Minuten). Das jüngste Regulations-Ereignis ist eine harte,
+//     spielindividuelle Untergrenze der aktuellen Spielzeit (z.B. Tor 54:10
+//     -> Spiel ist mindestens bei 54:10).
+//   - `statusLabel`: verbindlicher Drittel-Name -> Mindest-Offset (3. Drittel
+//     => >= 40') und Fenster-Obergrenze.
+// Rückgabe null, wenn WEDER ein Drittel-Name NOCH ein Ereignis eine belastbare
+// Zeit liefert -> die UI zeigt dann "Spielzeit nicht verfügbar" statt einer
+// erfundenen Uhr. `percent` wird bewusst NICHT verwendet (unzuverlässig/global).
+export function confirmedRegulationElapsed({ statusLabel, eventMinutes }) {
   const offset = regulationPeriodOffsetMinutes(statusLabel)
-  if (offset == null) return pctElapsed
-  return Math.min(offset + MINUTES_PER_PERIOD, Math.max(offset, pctElapsed))
+  const regEvents = (eventMinutes || []).filter((m) => Number.isFinite(m) && m >= 0 && m <= REGULATION_MINUTES)
+  const eventFloor = regEvents.length ? Math.max(...regEvents) : null
+  if (offset == null && eventFloor == null) return null
+  let base
+  if (offset == null) base = eventFloor
+  else if (eventFloor == null) base = offset
+  // Ereignis-Untergrenze gilt, aber nie unter dem aktuellen Drittel-Beginn und
+  // nie über dessen Ende (ein altes Ereignis aus einem früheren Drittel darf
+  // die Zeit nicht über das laufende Drittel hinausschieben).
+  else base = Math.min(offset + MINUTES_PER_PERIOD, Math.max(offset, eventFloor))
+  return Math.max(0, Math.min(REGULATION_MINUTES, base))
 }
 
 // Schreibt die angezeigte Spielzeit ZWISCHEN zwei SIHF-Snapshots per Wanduhr
@@ -175,7 +187,7 @@ export function regulationElapsedMinutes({ statusLabel, percent }) {
 // aktuellen Drittels und monoton (nie rückwärts). Während einer Pause steht
 // die Uhr (keine Echtzeit-Fortschreibung). Reine Funktion - die React-Hook
 // (liveGameClient.js) hält nur Anker-Zeitpunkt und zuletzt gezeigten Wert.
-//   confirmedMin   = regulationElapsedMinutes() des letzten Snapshots
+//   confirmedMin   = confirmedRegulationElapsed() des letzten Snapshots
 //   anchorWallMs   = Date.now() beim Empfang dieses Snapshots
 //   nowMs          = aktuelle Wanduhr
 //   offsetMin      = Drittel-Offset (null -> kein Drittel-Fenster)

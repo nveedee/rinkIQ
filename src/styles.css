@@ -1,5 +1,5 @@
 /* =========================================================================
-   NL Tracker – Design-System
+   RinkIQ – Design-System
    Kompaktes, datenorientiertes Analytics-Dashboard. Flach, ruhig, ein
    sparsam eingesetzter Akzent, keine Verzierung ohne Informationswert.
    ========================================================================= */
@@ -234,6 +234,15 @@ p { margin: 0 0 10px; }
   display: grid; place-items: center;
   font-size: 10.5px; font-weight: 800; letter-spacing: -0.02em;
   flex: none;
+}
+/* RinkIQ-Logo als Bild-Marke: der Wordmark liegt auf hellem Grund, deshalb ein
+   weisser, abgerundeter Chip - sauber lesbar im Light- UND Dark-Mode. */
+.brand img.mark {
+  width: 30px; height: 30px;
+  background: #fff;
+  object-fit: contain;
+  padding: 3px;
+  box-shadow: 0 0 0 1px var(--border, rgba(0,0,0,0.08));
 }
 .brand .name-block { display: flex; flex-direction: column; gap: 1px; line-height: 1.15; }
 .brand .season {

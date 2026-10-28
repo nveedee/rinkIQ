@@ -337,6 +337,29 @@ export function computeDecisionProbability(expHome, expAway) {
   return pTie
 }
 
+// Regulations-Ausgang (nach 60 Minuten) als klassisches 1-X-2: Heim führt /
+// Unentschieden / Auswärts führt - geschlossene Form über dieselben Poisson-
+// Torverteilungen und dieselbe Trunkierung wie computeDecisionProbability().
+// pTie ist identisch zu computeDecisionProbability(); pHomeReg/pAwayReg teilen
+// die restliche Masse auf. Die drei Werte summieren sich (bis auf die
+// vernachlässigte Trunkierung) zu 1 und bilden den Sporttip-Hauptmarkt
+// "Resultat nach 60 Minuten" ab - KEINE neue Prognoseformel, reine Umrechnung
+// der bereits bestehenden erwarteten Tore (expHome/expAway aus buildFixture).
+export function computeRegulationOutcomeProbabilities(expHome, expAway) {
+  const pmfHome = poissonPmfTable(expHome, FORECAST_GOAL_TRUNCATION)
+  const pmfAway = poissonPmfTable(expAway, FORECAST_GOAL_TRUNCATION)
+  let pHomeReg = 0, pTie = 0, pAwayReg = 0
+  for (let h = 0; h <= FORECAST_GOAL_TRUNCATION; h++) {
+    for (let a = 0; a <= FORECAST_GOAL_TRUNCATION; a++) {
+      const p = pmfHome[h] * pmfAway[a]
+      if (h > a) pHomeReg += p
+      else if (h < a) pAwayReg += p
+      else pTie += p
+    }
+  }
+  return { pHomeReg, pTie, pAwayReg }
+}
+
 // Heimsieg-/Auswärtssieg-/Entscheidung-nach-Verlängerung-Wahrscheinlichkeit
 // für alle noch offenen Spiele, aus ELO + Heimvorteil + SOG-zugelassen-
 // Faktor (identische Teamstärke-Basis wie computeFixtures()/die Monte-Carlo-

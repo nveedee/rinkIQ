@@ -43,7 +43,8 @@ All statements below were verified against the actual source in this repository 
 | Team & player CRUD (manual roster management) | ✅ Implemented |
 | Manual game entry/editing | ❌ Not implemented (explicitly removed, see `server/index.js` comment; README still describes it) |
 | Notifications (push/email/etc.) | ❌ Not implemented |
-| Authentication / multi-user support | ❌ Not implemented |
+| Admin authentication (Public/Admin Edition split) | ✅ Implemented (scrypt + HttpOnly session + CSRF, server-side; `server/auth.js`) |
+| Multi-user support (beyond single admin) | ❌ Not implemented (intentionally one admin) |
 | Mobile-specific native app | ❌ Not implemented (responsive web only) |
 | Automated logic tests (`node --test`, run via `npm test`) | ✅ Implemented (~29 suites / 347 tests, offline) |
 | Automated tests for React pages/components (rendering) | ❌ Not implemented (logic/server modules only) |
@@ -160,7 +161,7 @@ No other external APIs are called; there is no SIHF/NL authentication (both are 
 
 ## Backtesting
 
-- **Prediction snapshots** (`server/scripts/predictions.js`) — Every SIHF sync run calls `ensurePredictionSnapshots()`, which freezes a full pre-game forecast (10k-run Monte-Carlo per fixture, ELO/Power values, market-value/pre-season prior selection, rest-day adjustment) into `db.predictions[]` for every currently-`scheduled` game without an existing snapshot. Snapshots are immutable — a game is never given a second or updated snapshot.
+- **Prediction snapshots** (`server/scripts/predictions.js`) — Every SIHF sync run calls `ensurePredictionSnapshots()`, which stores a full pre-game forecast (10k-run Monte-Carlo per fixture, ELO/Power values, market-value/pre-season prior selection, rest-day adjustment) in `db.predictions[]` for every currently-`scheduled` game. Snapshots for still-`scheduled` games are **refreshed each run** with the current model state (so the pre-game forecast tracks live ELO instead of freezing at season start, when the whole schedule was already `scheduled`); the stored seed is reused so numbers stay stable while the ELO is unchanged. Once a game is no longer `scheduled` (started/final) it drops out of the refresh and its last pre-game snapshot is frozen for good. A one-time repair, `rebuildFinalGameSnapshots()` (run via `server/scripts/backfill-prediction-snapshots.js`), reconstructs the already-played games' snapshots **walk-forward** — ELO/SOG/Power from games *before* each fixture only, plus the live prior — to undo the pre-fix state where the whole season had been frozen at season-start ELO.
 - **Model Performance page** (`/model-performance`) — Evaluates only these frozen snapshots against actual results (`src/predictionMetrics.js`), so it is leak-free by construction (never recomputed against today's live ELO). Also displays a static reference block from the historical walk-forward backtest for comparison.
 - **Historical walk-forward backtest tooling** (`server/scripts/backtesting/`) — `run.js` orchestrates a predictor registry (`predictors.js`) over historical archive seasons (`loadHistorical.js`), computes metrics/calibration/bootstrap significance (`stats.js`), and writes a static export `public/backtest-results.json` consumed by `src/pages/Backtesting.jsx`. Model versions (v0 naive baseline through the current production model) are declared in `modelVersions.js` with a hand-set `status` (`candidate`/`production`/`not_validatable`). Also many one-off calibration scripts exist in `server/scripts/` (`backtest-elo.js`, `backtest-montecarlo.js`, `backtest-power-ranking*.js`, `backtest-preseason-h2h.js`, `backtest-h2h.js`, `backtest-goalie-integration.js`, `backtest-player-features.js`, `backtest-absence-features.js`, `analyze-player-impact-score.js`, `diagnose-seed-sensitivity.js`) used historically to calibrate the production algorithms; these are standalone CLI tools, not wired into the running app. Unit-tested via `server/scripts/backtesting/run.test.js`.
 
@@ -199,11 +200,72 @@ No dedicated mobile framework; responsiveness is handled via `styles.css` (not r
 ## Known Gaps / Potential Improvements
 
 - **README** has been updated to the current sync-driven reality (no more manual game entry / `GameEntry.jsx`, no `crud('games', ...)`; correct page list, persistence and test commands). The game data flow is 100% sync-driven (NL-API + SIHF); manual game creation/editing was removed (see the comment in `server/index.js`).
-- **No authentication or access control** anywhere in the API or frontend — anyone who can reach the server (or open the SPA against it) has full read/write access, including data reset/import. Acceptable for a private single-user tool, but worth flagging.
+- **Authentication / access control**: added as a Public/Admin Edition split (see the dedicated section below). The public API exposes only curated read endpoints; all writes (settings/teams/players/import/reset/sync), the full DB (`GET /api/data`), the detailed sync status and `GET /api/admin/system` require a valid admin session (server-side, `server/auth.js`). Read-only live/replay endpoints remain public (no secrets). The session store is in-memory (single admin, single process) — a server restart ends the session (re-login).
 - **Tests cover logic, not rendering**: there are now ~29 `node --test` suites (347 tests, run together via `npm test`, plus GitHub-Actions CI) covering the computation and server modules (ELO/sim/scoreline/stats/predictions/metrics/fan-analytics/player-rating/write-queue/persistence/live-replay/sync merge logic …). React pages/components still have **no rendering/interaction tests** — UI regressions would only be caught manually.
 - **Whole-file JSON persistence**: `server/index.js` still reads and rewrites the entire `db.json` on every mutating request. Concurrent writers can no longer lose each other's updates (all writes go through the `server/dbLock.js` queue) and writes are atomic (tmp+rename), but the whole-file model itself will not scale gracefully as data grows across future seasons — there is no incremental/streaming write path and no automatic backup rotation beyond the manual export button (one-off timestamped backups exist under `backups/`).
 - **`season` field unused**: `computeElo()`'s season-end regression-to-mean logic (`ELO_CONFIG.seasonEndRegression`) only fires "if games carry a `season` field and it changes" — the comment in `src/elo.js` states games currently never carry this field, so the regression path is dead code for the live season (it is only exercised via the separate pre-season-ELO carry-over mechanism, `src/preseasonElo.js`).
 - **Manual player/team edits vs. sync**: player edits made through the (still-present) `POST/PUT/DELETE /api/players` CRUD endpoints could, in principle, be overwritten by the next NL-API sync for any field the sync considers its own (`externalId`, `number`, `teamId`, `position`, `apiStats`, `marketValue*`) — the code carefully avoids touching genuinely manual fields (name, positionDetail, shoots, nationality, heightCm, weightKg, birthdate, injury*), but there is no UI warning that some fields are sync-owned.
 - **Play-out opponent (Ligaqualifikation) not modeled**: `simulateSeasonProjections()` explicitly tracks only the *probability* of reaching the Ligaqualifikation (play-out loser vs. the Swiss League champion); the Swiss League side of that tie is outside the data model and is not simulated (documented directly in `src/playoffSim.js` comments).
 - **Render free-plan persistence is NOT guaranteed (honest limit)**: `render.yaml` defines a persistent disk mounted at `…/server/data/persistent` and sets `PERSIST_DIR` to it, and `server/index.js` resolves the writable files there. However the disk block only takes effect on a **paid** plan — the file currently declares `plan: free`, on which Render does not attach a persistent disk, so `db.json` is **ephemeral** and does not survive a redeploy/spin-down. The restore path exists (`BOOT_SKIP_SYNC=1` suppresses auto-syncs at boot so a backup can be re-imported via `POST /api/import` before any job writes), but durable persistence requires switching off the free plan in the Render dashboard. Not changed here (no plan/cost changes made).
-- **No rate limiting / request validation on the Express API** beyond the two sync-mutex booleans and a basic `Array.isArray(incoming.teams)` check on import — arbitrary JSON payloads to `PUT /api/settings` or `POST /api/teams|players` are merged in without schema validation.
+- **No rate limiting / request validation on the Express API** beyond the two sync-mutex booleans and a basic `Array.isArray(incoming.teams)` check on import — arbitrary JSON payloads to `PUT /api/settings` or `POST /api/teams|players` are merged in without schema validation. (The admin *login* is rate-limited per IP; the mutation endpoints themselves are not.)
+
+---
+
+# Public Edition & Admin Edition
+
+The app now serves two editions from **one** codebase (shared components, shared business logic):
+
+- **Public Edition** — no login. Clean top-level URLs, only explicitly released ("stable") read-only features, friendly loading/error states (a top-level `ErrorBoundary` prevents a single page from blanking the site), and a clear "Letzte Aktualisierung / Datenstand" indicator. Probabilistic season/championship odds are shown **only** from a stored server snapshot (never a live per-view recompute), labelled with the computation time.
+- **Admin Edition** — behind login (`/login`). The full, unchanged application: all analytics, the interactive season projection (What-if/Locks/Swing), postseason paths, model performance, backtesting, settings, data management and a new Admin Dashboard (`/admin`) + System status (`/admin/system`).
+
+**Routing / architecture note (one deliberate consolidation).** The shared read-only analytics pages (standings, schedule, teams, players, elo, power, H2H, fair-odds, fan-analytics, topscorers, goalies, match/team/player detail) keep their existing top-level URLs and are used by *both* editions — the role-aware header and in-page affordances (e.g. roster editing on Team Detail, the Sync widget) switch on the session, and these pages are read-only for visitors. They are **not** physically duplicated under `/admin/*`; duplicating them would have required rewriting ~56 intra-app links and would break existing bookmarks for no functional gain. The admin area under `/admin/*` hosts the genuinely admin-only surfaces (dashboard, system/sync). The admin-only *analytics* pages (`/settings`, `/model-performance`, `/backtesting`, `/postseason`, and the interactive `/playoff-odds`) stay at their existing paths but are guarded client-side **and** server-side. This meets every requirement (public = curated, experimental = admin-only, admin reaches all features, admin writes/data protected) while minimising risk.
+
+> ⚠️ Security note: the client-side route guard (`RequireAdmin`) and the `isAdmin` flag are **presentation only**. The real boundary is server-side: protected `/api` endpoints require a valid session cookie + CSRF token (`server/auth.js`). A manipulated browser value grants nothing.
+
+## Public-Feature-Freigabe (STABLE / EXPERIMENTAL / DISABLED)
+
+Central config: `src/featureConfig.js` (single source of truth; default-safe — anything not explicitly `stable` is **not** public).
+
+| Feature | Status | Where / notes |
+|---|---|---|
+| Tabelle (Standings) | **STABLE** | public, read-only |
+| Spielplan + Match-Prognosen (closed-form win prob) | **STABLE** | public; cheap closed-form, labelled model forecast |
+| Teams / Team-Detail | **STABLE** | public, read-only (roster editing hidden for visitors) |
+| Spieler / Player-Detail | **STABLE** | public, read-only |
+| Topscorers | **STABLE** | public |
+| Torhüter (Goalies) | **STABLE** | public |
+| ELO | **STABLE** | public |
+| Power Ranking | **STABLE** | public |
+| Head-to-Head | **STABLE** | public |
+| Playoff-/Meister-Wahrscheinlichkeiten | **STABLE** | public **from stored snapshot only** (`db.projectionSnapshot`, `PublicPlayoffOdds.jsx`), labelled with Datenstand |
+| Faire Quoten | **EXPERIMENTAL** | admin only |
+| Fan Analytics | **EXPERIMENTAL** | admin only |
+| Season Projection *interactive* (What-if / Locks / Swing / Targets / Verlauf) | **EXPERIMENTAL** | admin only — expensive 10k live sim per interaction |
+| Postseason Paths | **EXPERIMENTAL** | admin only — own 10k live sim |
+| Modell-Performance | **EXPERIMENTAL** | admin only |
+| Backtesting | **EXPERIMENTAL** | admin only |
+| Einstellungen (Settings) | **EXPERIMENTAL** | admin only (privileged) |
+| Datenverwaltung & Sync (`/admin/system`) | **EXPERIMENTAL** | admin only (privileged) |
+| Dev Live-Replay | **DISABLED** | DEV build only; never in production (unchanged) |
+
+No feature was removed or disabled as "broken" — the previously-noted gaps (whole-file persistence, Render free-plan ephemerality, unused `season` field, play-out opponent not modelled) are documented above and unchanged; none block a released public feature.
+
+## Admin-Zugang einrichten (Erstkonfiguration)
+
+There is **no** default password and **no** self-registration. Setup is server-side only:
+
+1. Generate a password hash locally (the plaintext is never stored or committed):
+   ```
+   NEW_ADMIN_PASSWORD='<dein-passwort>' node server/scripts/set-admin-password.js
+   ```
+2. Set the printed value as the environment variable `ADMIN_PASSWORD_HASH` (e.g. in the Render dashboard → Environment, **not** in the repo). Optionally set `ADMIN_USERNAME` (default: `admin`).
+3. Restart the server. Until `ADMIN_PASSWORD_HASH` is set, the login endpoint returns a clear 503 ("nicht konfiguriert") and the public site still works normally.
+4. Log in at `/login`. Logout is available in the header.
+
+Relevant env vars (all optional except the hash): `ADMIN_PASSWORD_HASH` (required to enable login), `ADMIN_USERNAME` (default `admin`), `ADMIN_SESSION_TTL_HOURS` (default 12), `ADMIN_LOGIN_MAX_ATTEMPTS` (default 8 / 15 min per IP), `PROJECTION_RUNS` (default 10000), `PROJECTION_INTERVAL_MIN` (default 60). In production (`NODE_ENV=production`) the session/CSRF cookies are set `Secure`; the app already sets `trust proxy` for Render.
+
+## API surface (public vs. admin)
+
+- **Open (public):** `GET /api/public/data` (curated DB projection — teams/players/games, whitelisted settings, the frozen pre-game `predictions` and the `projectionSnapshot`; **excludes** only the personal `topscorerRoster`), `GET /api/public/status` (last successful update time only), `GET /api/auth/session`, and the read-only live/replay endpoints.
+- **Admin only (session + CSRF on writes):** `GET /api/data`, `PUT /api/settings`, `POST/PUT/DELETE /api/teams|players`, `POST /api/import|reset|sync|sync-nl`, `GET /api/sync-status|sync-nl-status`, `GET /api/export`, `GET /api/admin/system`.
+- **Auth:** `POST /api/auth/login` (rate-limited), `POST /api/auth/logout`.

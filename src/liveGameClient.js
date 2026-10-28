@@ -17,8 +17,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   computeLiveWinProbability, buildLiveProbabilityTimeline, REGULATION_MINUTES, MINUTES_PER_PERIOD, formatClock, periodTimeFromElapsed,
-  regulationElapsedMinutes, regulationPeriodOffsetMinutes, isIntermissionStatus, advanceDisplayedElapsed,
+  confirmedRegulationElapsed, regulationPeriodOffsetMinutes, isIntermissionStatus, advanceDisplayedElapsed,
 } from './liveProbability.js'
+
+// Absolute Spielzeiten (Minuten) der echten Tor-/Straf-Ereignisse EINES
+// Snapshots - die einzige pro Spiel unterschiedliche, verbindliche
+// Zeitinformation (siehe confirmedRegulationElapsed() in liveProbability.js).
+function eventMinutesOf(liveState) {
+  return [...(liveState.goals || []), ...(liveState.penalties || [])]
+    .map((e) => toMinute(e.time))
+    .filter((m) => m != null)
+}
 
 export const LIVE_CLIENT_POLL_MS = 20_000
 // Lokaler Zwischen-Tick: schreibt die angezeigte Spielzeit/den "JETZT"-Marker
@@ -80,17 +89,22 @@ export function buildRealLiveMatch({ liveState, homeTeam, awayTeam, pregame, his
   // "Linie" aus einem einzigen Punkt ist im SVG nicht sichtbar (nur die
   // Torereignis-Marker), siehe LiveWinProbabilityPanel.jsx::buildMonotonePath
   // (n===1 -> reines "M x y" ohne Liniensegment).
-  // REG: bevorzugt der von useLiveGame() per Wanduhr fortgeschriebene,
-  // Drittel-geklemmte Wert (regElapsedMinutes). Fehlt er (z.B. Dashboard-
-  // Einzelabruf über LiveNowSection), wird die bestätigte, ebenfalls
-  // Drittel-geklemmte Zeit direkt aus dem Snapshot abgeleitet - nie mehr die
-  // ungeklemmte percent-Rohschätzung (siehe liveProbability.js::
-  // regulationElapsedMinutes - Marker lag an Drittelgrenzen sonst im falschen
-  // Abschnitt). Replay/OT/SO unverändert.
+  // REG: bevorzugt der von useLiveGame() per Wanduhr fortgeschriebene Wert
+  // (regElapsedMinutes). Fehlt er (z.B. Dashboard-Einzelabruf über
+  // LiveNowSection), wird die bestätigte Zeit direkt aus DIESEM Snapshot
+  // abgeleitet - aus Drittel-Name + den echten Ereigniszeiten dieses Spiels,
+  // NIE aus dem unzuverlässigen/globalen percent (siehe liveProbability.js::
+  // confirmedRegulationElapsed). `regTimeConfirmed` ist null, wenn keine
+  // belastbare Zeit vorliegt -> Uhr wird dann ausgeblendet (keine erfundene
+  // Zeit). Replay/OT/SO unverändert.
+  const regTimeConfirmed = liveState.phase === 'REG'
+    ? (regElapsedMinutes ?? confirmedRegulationElapsed({ statusLabel: liveState.statusLabel, eventMinutes: eventMinutesOf(liveState) }))
+    : null
+  const regTimeAvailable = liveState.phase !== 'REG' || regTimeConfirmed != null
   const elapsedMinutes = liveState.replay
     ? Math.min(REGULATION_MINUTES, liveState.replayElapsedSeconds / 60)
     : (liveState.phase === 'REG'
-      ? (regElapsedMinutes ?? regulationElapsedMinutes({ statusLabel: liveState.statusLabel, percent: liveState.percent }))
+      ? (regTimeConfirmed ?? 0)
       : (otElapsedMinutes ?? REGULATION_MINUTES))
   const prob = computeLiveWinProbability({
     expHomeFull: pregame.expHomeFull, expAwayFull: pregame.expAwayFull, pHomePreGame: pregame.pHomePreGame,
@@ -108,11 +122,13 @@ export function buildRealLiveMatch({ liveState, homeTeam, awayTeam, pregame, his
     status: {
       period,
       periodLabel: liveState.statusLabel || (typeof period === 'number' ? `${period}. Drittel` : period),
-      // periodTime ist bereits "MM:SS" (formatClock() lief schon in
-      // periodTimeFromElapsed()) - NUR eine Näherung aus `percent` (siehe
-      // Kommentar bei elapsedMinutesFromPercent), deshalb kein Sekunden-
-      // Countdown-Anspruch, aber besser als gar keine Zeitangabe.
-      clock: liveState.phase === 'REG' ? periodTime : null,
+      // periodTime ("MM:SS") stammt aus der bestätigten, spielindividuellen
+      // Zeit (Drittel-Name + echte Ereigniszeiten, siehe oben), per Wanduhr
+      // fortgeschrieben. KEIN exakter SIHF-Sekunden-Countdown, aber belastbar
+      // pro Spiel. Liegt keine Zeit vor (regTimeAvailable === false), wird die
+      // Uhr ausgeblendet statt eine falsche Zeit anzuzeigen.
+      clock: liveState.phase === 'REG' && regTimeAvailable ? periodTime : null,
+      timeAvailable: regTimeAvailable,
       percent: liveState.percent,
     },
     score: { home: liveState.homeGoals, away: liveState.awayGoals },
@@ -165,6 +181,12 @@ export function useLiveGame({ gameId, homeTeam, awayTeam, pregame, enabled }) {
   // dafür, dass die Chart-X-Position während OT/SO mit der echten
   // verstrichenen Zeit weiterwandert (siehe buildRealLiveMatch()-Kommentar).
   const otStartRef = useRef(null)
+  // Zuletzt verarbeitete gameId - erkennt einen echten Spielwechsel. Der Effekt
+  // läuft auch bei reiner Referenz-Änderung von `pregame` erneut (neues
+  // Objekt-Literal pro Render in MatchupDetail); der Zeit-/liveMatch-Reset darf
+  // aber NUR bei tatsächlichem Spielwechsel erfolgen, sonst würde liveMatch bei
+  // jedem Render auf null zurückgesetzt (Flackern/kein Live-Block).
+  const gameKeyRef = useRef(null)
 
   useEffect(() => {
     if (!enabled || !gameId || !pregame) {
@@ -174,6 +196,20 @@ export function useLiveGame({ gameId, homeTeam, awayTeam, pregame, enabled }) {
       setLiveMatch(null)
       setEnded(false)
       return
+    }
+
+    // NUR bei echtem Spielwechsel ALLE pro-Spiel-Zeit-Refs + den sichtbaren
+    // Stand zurücksetzen, damit NIE die Zeit (Anker/Marker/letzter Snapshot)
+    // eines vorher betrachteten Spiels in ein anderes übernommen wird. Bei
+    // bloss neuer `pregame`-Referenz (gleiche gameId) KEIN Reset -> kein
+    // Flackern von liveMatch.
+    if (gameKeyRef.current !== gameId) {
+      gameKeyRef.current = gameId
+      lastStateRef.current = null
+      regAnchorRef.current = null
+      otStartRef.current = null
+      setLiveMatch(null)
+      setEnded(false)
     }
 
     let cancelled = false
@@ -193,13 +229,15 @@ export function useLiveGame({ gameId, homeTeam, awayTeam, pregame, enabled }) {
       let regElapsedMinutes = null
       if (liveState.phase === 'REG') {
         const a = regAnchorRef.current
-        if (a) {
+        if (a && a.confirmedMin != null) {
           regElapsedMinutes = advanceDisplayedElapsed({
             confirmedMin: a.confirmedMin, anchorWallMs: a.wallMs, nowMs: now,
             offsetMin: a.offset, intermission: a.intermission, prevDisplayedMin: a.prevMin,
           })
           a.prevMin = regElapsedMinutes // Monotonie über die Zwischen-Ticks hinweg
         }
+        // a.confirmedMin == null -> keine belastbare Zeit; regElapsedMinutes
+        // bleibt null, buildRealLiveMatch blendet die Uhr aus.
       } else {
         if (otStartRef.current == null) otStartRef.current = now
         otElapsedMinutes = Math.min(REGULATION_MINUTES + (now - otStartRef.current) / 60000, OT_DISPLAY_CAP_MINUTES)
@@ -240,14 +278,17 @@ export function useLiveGame({ gameId, homeTeam, awayTeam, pregame, enabled }) {
       if (cancelled) return
 
       lastStateRef.current = liveState
-      // Zeitanker mit der BESTÄTIGTEN Spielzeit synchronisieren (Drittel-
-      // geklemmt). Bei Drittelwechsel wird die Monotonie-Basis zurückgesetzt
-      // (erlaubter Vorwärtssprung ins neue Drittel), innerhalb desselben
-      // Drittels verhindert prevMin Rücksprünge.
+      // Zeitanker mit der BESTÄTIGTEN, spielindividuellen Spielzeit
+      // synchronisieren: aus Drittel-Name + den echten Ereigniszeiten DIESES
+      // Spiels (confirmedRegulationElapsed), NIE aus percent. Bei Drittelwechsel
+      // wird die Monotonie-Basis zurückgesetzt (erlaubter Vorwärtssprung ins
+      // neue Drittel); innerhalb desselben Drittels verhindert prevMin
+      // Rücksprünge. confirmed === null (keine belastbare Zeit) -> Anker ohne
+      // Zeit, die Uhr wird ausgeblendet.
       if (liveState.phase === 'REG') {
         const offset = regulationPeriodOffsetMinutes(liveState.statusLabel)
         const intermission = isIntermissionStatus(liveState.statusLabel)
-        const confirmed = regulationElapsedMinutes({ statusLabel: liveState.statusLabel, percent: liveState.percent })
+        const confirmed = confirmedRegulationElapsed({ statusLabel: liveState.statusLabel, eventMinutes: eventMinutesOf(liveState) })
         const prev = regAnchorRef.current
         const prevMin = prev && prev.offset === offset ? prev.prevMin : null
         regAnchorRef.current = { confirmedMin: confirmed, wallMs: Date.now(), offset, intermission, prevMin }

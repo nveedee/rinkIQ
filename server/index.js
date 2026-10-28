@@ -7,6 +7,12 @@ import { runNlSync, readNlSyncStatus, DEFAULT_NL_SYNC_INTERVAL_MIN } from './syn
 import { runNlGameDetailSync } from './nlGameDetailSync.js'
 import { pollLiveGames, ensureFreshLiveState, getAllLiveStates, LIVE_POLL_INTERVAL_MS } from './liveSync.js'
 import { runExclusive, writeJsonAtomic } from './dbLock.js'
+import {
+  attachAuth, requireAuth, requireAdminWrite,
+  verifyCredentials, createSession, destroySession, setSessionCookies, clearSessionCookies,
+  isAuthConfigured, loginAllowed, resetLoginAttempts, getAdminConfig, SESSION_COOKIE,
+} from './auth.js'
+import { refreshProjectionSnapshot } from './projectionSnapshot.js'
 
 const { runSync: runSihfSync, runDiscover: runSihfDiscover, readSyncStatus } = sihfSync
 
@@ -115,20 +121,123 @@ function makeId(prefix) {
   return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`
 }
 
+// Season-Projection-Snapshot (server/projectionSnapshot.js) neu berechnen -
+// fire-and-forget, einfacher Re-Entrancy-Guard. Wird nach erfolgreichen Syncs,
+// beim Start und periodisch angestossen (siehe unten).
+let snapshotRunning = false
+async function refreshSnapshotSafe() {
+  if (snapshotRunning) return
+  snapshotRunning = true
+  try {
+    await refreshProjectionSnapshot({ readDb, mutateDb, log: (...a) => console.log('[PROJECTION]', ...a) })
+  } catch (e) {
+    console.error('[PROJECTION] Fehler:', e.message)
+  } finally {
+    snapshotRunning = false
+  }
+}
+
+// Kuratierte, öffentliche Projektion der DB (Public Edition). Einzige Stelle,
+// an der der Server entscheidet, was unangemeldete Besucher sehen. db.json
+// enthält keine Geheimnisse; bewusst WEGGELASSEN wird nur der persönliche
+// Topscorer-Kader (settings.topscorerRoster). db.predictions (eingefrorene
+// Pre-Game-Snapshots - nur Wahrscheinlichkeiten/ELO) sind bewusst DABEI, damit
+// die öffentlichen Match-Prognosen exakt dieselben Pre-Game-Werte wie der
+// Admin zeigen (src/pregamePrediction.js, single source of truth). Statt der
+// teuren Live-Season-Projektion nur der gespeicherte Snapshot.
+function toPublicDb(db) {
+  const s = db.settings || {}
+  return {
+    settings: {
+      seasonName: s.seasonName,
+      eloStart: s.eloStart,
+      eloK: s.eloK,
+      eloHomeAdvantage: s.eloHomeAdvantage,
+      marketValuePriorEnabled: s.marketValuePriorEnabled,
+      priorSpread: s.priorSpread,
+      restDaysEnabled: s.restDaysEnabled,
+      backToBackPenalty: s.backToBackPenalty,
+      public: true,
+    },
+    teams: db.teams || [],
+    players: db.players || [],
+    games: db.games || [],
+    predictions: db.predictions || [],
+    projectionSnapshot: db.projectionSnapshot || null,
+  }
+}
+
 const app = express()
+// Hinter dem Render-Proxy (bzw. jedem Reverse-Proxy): echte Client-IP für den
+// Login-Rate-Limiter und korrekte Secure-Cookies.
+app.set('trust proxy', 1)
 app.use(express.json({ limit: '5mb' }))
+// Session/CSRF aus Cookies lesen und an req hängen (für alle Routen verfügbar).
+app.use(attachAuth)
+
+// ---------------------------------------------------------------------------
+// Authentifizierung (server/auth.js) - Admin-Login/Logout/Session-Status.
+// ---------------------------------------------------------------------------
+app.post('/api/auth/login', (req, res) => {
+  if (!loginAllowed(req)) {
+    return res.status(429).json({ error: 'Zu viele Login-Versuche. Bitte später erneut versuchen.' })
+  }
+  if (!isAuthConfigured()) {
+    return res.status(503).json({ error: 'Admin-Login ist serverseitig nicht konfiguriert (ADMIN_PASSWORD_HASH fehlt).' })
+  }
+  const { username, password } = req.body || {}
+  if (!verifyCredentials(username, password)) {
+    return res.status(401).json({ error: 'Benutzername oder Passwort falsch.' })
+  }
+  const cfg = getAdminConfig()
+  const { token, csrf } = createSession(cfg.username)
+  setSessionCookies(res, token, csrf)
+  resetLoginAttempts(req)
+  res.json({ username: cfg.username })
+})
+
+app.post('/api/auth/logout', (req, res) => {
+  destroySession(req.cookies?.[SESSION_COOKIE])
+  clearSessionCookies(res)
+  res.json({ ok: true })
+})
+
+app.get('/api/auth/session', (req, res) => {
+  res.json({
+    authenticated: Boolean(req.session),
+    username: req.session?.username || null,
+    configured: isAuthConfigured(),
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Öffentliche (unauthentifizierte) Lese-Endpunkte für die Public Edition.
+// ---------------------------------------------------------------------------
+app.get('/api/public/data', (_req, res) => {
+  res.json(toPublicDb(readDb()))
+})
+
+// Minimaler öffentlicher Datenstand: nur der Zeitpunkt der letzten
+// ERFOLGREICHEN Aktualisierung (keine internen Fehler-/Timing-Details).
+app.get('/api/public/status', (_req, res) => {
+  const nl = readNlSyncStatus() || {}
+  const sihf = readSyncStatus() || {}
+  const times = [nl.lastSuccessAt, sihf.lastSuccessAt].filter(Boolean).sort()
+  res.json({ lastSuccessAt: times.length ? times[times.length - 1] : null })
+})
 
 // ---------------------------------------------------------------------------
 // Gesamte Daten
 // ---------------------------------------------------------------------------
-app.get('/api/data', (_req, res) => {
+// Vollständige DB - NUR für den Admin (Public Edition nutzt /api/public/data).
+app.get('/api/data', requireAuth, (_req, res) => {
   res.json(readDb())
 })
 
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
-app.put('/api/settings', async (req, res) => {
+app.put('/api/settings', ...requireAdminWrite, async (req, res) => {
   try {
     const settings = await mutateDb((db) => {
       db.settings = { ...db.settings, ...req.body }
@@ -144,7 +253,7 @@ app.put('/api/settings', async (req, res) => {
 // Generischer CRUD-Helfer für Collections (teams, players, games)
 // ---------------------------------------------------------------------------
 function crud(collection, idPrefix) {
-  app.post(`/api/${collection}`, async (req, res) => {
+  app.post(`/api/${collection}`, ...requireAdminWrite, async (req, res) => {
     try {
       const item = await mutateDb((db) => {
         const it = { id: makeId(idPrefix), ...req.body }
@@ -157,7 +266,7 @@ function crud(collection, idPrefix) {
     }
   })
 
-  app.put(`/api/${collection}/:id`, async (req, res) => {
+  app.put(`/api/${collection}/:id`, ...requireAdminWrite, async (req, res) => {
     try {
       const result = await mutateDb((db) => {
         const idx = db[collection].findIndex((x) => x.id === req.params.id)
@@ -172,7 +281,7 @@ function crud(collection, idPrefix) {
     }
   })
 
-  app.delete(`/api/${collection}/:id`, async (req, res) => {
+  app.delete(`/api/${collection}/:id`, ...requireAdminWrite, async (req, res) => {
     try {
       const removed = await mutateDb((db) => {
         const before = db[collection].length
@@ -212,11 +321,11 @@ crud('players', 'player')
 // ---------------------------------------------------------------------------
 let syncRunning = false
 
-app.get('/api/sync-status', (_req, res) => {
+app.get('/api/sync-status', requireAuth, (_req, res) => {
   res.json(readSyncStatus() || { lastRunAt: null, lastSuccessAt: null })
 })
 
-app.post('/api/sync', async (_req, res) => {
+app.post('/api/sync', ...requireAdminWrite, async (_req, res) => {
   if (syncRunning) return res.status(409).json({ error: 'Sync läuft bereits' })
   syncRunning = true
   const logs = []
@@ -224,6 +333,7 @@ app.post('/api/sync', async (_req, res) => {
     // Über die zentrale Schreib-Queue, damit der Sync nie mit einem parallelen
     // NL-Sync/Discover/API-Write kollidiert (siehe server/dbLock.js).
     const summary = await runExclusive(() => runSihfSync({ write: true, log: (...a) => logs.push(a.join(' ')) }))
+    refreshSnapshotSafe() // fire-and-forget: Projektion nach dem Sync auffrischen
     res.json({ ...summary, logs })
   } catch (e) {
     res.status(502).json({ error: 'SIHF-Synchronisation momentan nicht verfügbar.', message: e.message, logs })
@@ -245,11 +355,11 @@ let nlSyncRunning = false
 let discoverRunning = false
 let discoverFailStreak = 0
 
-app.get('/api/sync-nl-status', (_req, res) => {
+app.get('/api/sync-nl-status', requireAuth, (_req, res) => {
   res.json(readNlSyncStatus() || { lastRunAt: null, lastSuccessAt: null })
 })
 
-app.post('/api/sync-nl', async (_req, res) => {
+app.post('/api/sync-nl', ...requireAdminWrite, async (_req, res) => {
   if (nlSyncRunning) return res.status(409).json({ error: 'NL-Sync läuft bereits' })
   nlSyncRunning = true
   const logs = []
@@ -268,6 +378,7 @@ app.post('/api/sync-nl', async (_req, res) => {
       }
       return { summary, gameDetailSummary }
     })
+    refreshSnapshotSafe() // fire-and-forget: Projektion nach dem Sync auffrischen
     res.json({ ...summary, gameDetail: gameDetailSummary, logs })
   } catch (e) {
     res.status(502).json({ error: 'National-League-API momentan nicht erreichbar oder Team-Mapping fehlgeschlagen.', message: e.message, logs })
@@ -377,12 +488,12 @@ app.get('/api/live-games', (req, res) => {
 // ---------------------------------------------------------------------------
 // Backup / Import / Reset
 // ---------------------------------------------------------------------------
-app.get('/api/export', (_req, res) => {
+app.get('/api/export', requireAuth, (_req, res) => {
   res.setHeader('Content-Disposition', 'attachment; filename="nl-backup.json"')
   res.json(readDb())
 })
 
-app.post('/api/import', async (req, res) => {
+app.post('/api/import', ...requireAdminWrite, async (req, res) => {
   const incoming = req.body
   if (!incoming || !Array.isArray(incoming.teams)) {
     return res.status(400).json({ error: 'Ungültiges Backup-Format' })
@@ -398,7 +509,7 @@ app.post('/api/import', async (req, res) => {
   }
 })
 
-app.post('/api/reset', async (req, res) => {
+app.post('/api/reset', ...requireAdminWrite, async (req, res) => {
   // keepTeams=true behält Teams & Spieler, löscht nur Spiele.
   const keepTeams = req.body && req.body.keepTeams
   try {
@@ -418,6 +529,43 @@ app.post('/api/reset', async (req, res) => {
     res.json(db)
   } catch (e) {
     res.status(500).json({ error: 'Reset fehlgeschlagen', message: e.message })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Admin-Systemstatus: Kennzahlen + Datenquellen-/Sync-Status für das
+// Admin-Dashboard. Nur für angemeldete Admins.
+// ---------------------------------------------------------------------------
+app.get('/api/admin/system', requireAuth, (_req, res) => {
+  try {
+    const db = readDb()
+    const games = db.games || []
+    const played = games.filter((g) => g.status === 'final').length
+    const nl = readNlSyncStatus() || {}
+    const sihf = readSyncStatus() || {}
+    const snap = db.projectionSnapshot || null
+    res.json({
+      counts: {
+        teams: (db.teams || []).length,
+        players: (db.players || []).length,
+        gamesTotal: games.length,
+        gamesPlayed: played,
+        gamesOpen: games.length - played,
+        predictions: (db.predictions || []).length,
+      },
+      sync: {
+        nl: { lastRunAt: nl.lastRunAt || null, lastSuccessAt: nl.lastSuccessAt || null, lastError: nl.lastError || null },
+        sihf: { lastRunAt: sihf.lastRunAt || null, lastSuccessAt: sihf.lastSuccessAt || null, lastError: sihf.lastError || null },
+      },
+      projectionSnapshot: snap ? { computedAt: snap.computedAt, runs: snap.runs, scheduledCount: snap.scheduledCount } : null,
+      runtime: {
+        nodeEnv: process.env.NODE_ENV || 'development',
+        uptimeSec: Math.round(process.uptime()),
+        persistDir: PERSIST_DIR,
+      },
+    })
+  } catch (e) {
+    res.status(500).json({ error: 'Systemstatus nicht verfügbar', message: e.message })
   }
 })
 
@@ -474,6 +622,7 @@ app.listen(PORT, () => {
       if (syncRunning) return
       syncRunning = true
       runExclusive(() => runSihfSync({ write: true, log: (...a) => console.log('[SIHF SYNC]', ...a) }))
+        .then(() => refreshSnapshotSafe())
         .catch((e) => console.error('[SIHF SYNC] Fehler:', e.message))
         .finally(() => { syncRunning = false })
     }
@@ -496,6 +645,7 @@ app.listen(PORT, () => {
       runNlSync({ write: true, log: (...a) => console.log('[NL SYNC]', ...a) })
         .then(() => runNlGameDetailSync({ write: true, log: (...a) => console.log('[NL GAME DETAIL]', ...a) }))
     )
+      .then(() => refreshSnapshotSafe())
       .catch((e) => console.error('[NL SYNC/GAME DETAIL] Fehler:', e.message))
       .finally(() => { nlSyncRunning = false })
   }
@@ -561,6 +711,17 @@ app.listen(PORT, () => {
     console.log(`  SIHF-Auto-Discover aktiv (beim Start + alle ${discoverIntervalMs / 3600000} h)`)
     runDiscoverSafe()
     setInterval(runDiscoverSafe, discoverIntervalMs)
+  }
+
+  // Season-Projection-Snapshot (Public Edition): beim Start einmal auffrischen
+  // (verzögert, damit der initiale NL-Sync oben zuerst Daten bringt - blockiert
+  // den Start nicht) und danach periodisch als Fallback. Durch BOOT_SKIP_SYNC
+  // unterdrückt (Restore-Fenster schreibt nicht).
+  if (!bootSkipSync) {
+    const snapIntervalMs = (Number(process.env.PROJECTION_INTERVAL_MIN) || 60) * 60 * 1000
+    console.log(`  Projection-Snapshot aktiv (Start + alle ${snapIntervalMs / 60000} Min.)`)
+    setTimeout(() => refreshSnapshotSafe(), 20 * 1000)
+    setInterval(() => refreshSnapshotSafe(), snapIntervalMs)
   }
 
   console.log()

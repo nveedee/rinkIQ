@@ -18,6 +18,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useData } from '../DataContext.jsx'
+import { useAuth } from '../authContext.jsx'
 import { TeamBadge, Modal, toast, SortableTable, MarketValueTrend, ProbBar } from '../components/ui.jsx'
 import TeamLogo from '../components/TeamLogo.jsx'
 import {
@@ -76,6 +77,7 @@ export default function TeamDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const { data, derived, api, refresh } = useData()
+  const { isAdmin } = useAuth()
   const playerHistoryData = usePlayerHistory()
   const baselines = usePositionBaselines()
   const teamHistoryData = useTeamHistory()
@@ -183,11 +185,22 @@ export default function TeamDetail() {
   // SIHF-Sync SOG liefert, siehe stats.js).
   const teamSkaters = players.filter((p) => p.position !== 'G')
   const teamGoalies = players.filter((p) => p.position === 'G')
-  const sogForTotal = teamSkaters.reduce((s, p) => s + (statById[p.id]?.sog || 0), 0)
+  // "SOG für" (Schüsse des eigenen Teams) gibt es nur aus Spieler-Boxscores und
+  // nur für einen Teil der Spiele - Summe durch ALLE Spiele zu teilen
+  // unterschätzte den Wert massiv. Deshalb kein Saisonwert, nur die
+  // transparente Abdeckung (Spiele mit Boxscore-Schüssen / gespielte Spiele).
+  const rosterIdSet = new Set(teamSkaters.map((p) => p.id))
+  const sogCoverageGames = data.games.filter((g) => isFinalGame(g)
+    && (g.homeTeamId === id || g.awayTeamId === id)
+    && (g.playerStats || []).some((st) => rosterIdSet.has(st.playerId) && st.sog > 0)).length
   const sogAllowedTotal = teamGoalies.reduce((s, p) => s + ((statById[p.id]?.saves || 0) + (statById[p.id]?.goalsAgainst || 0)), 0)
-  const sogForPg = standing?.gp > 0 && sogForTotal > 0 ? sogForTotal / standing.gp : null
   const sogAllowedPg = standing?.gp > 0 && sogAllowedTotal > 0 ? sogAllowedTotal / standing.gp : null
   const histLast3 = lastNSeasons(teamHistoryData, id, 3)
+  const leagueGp = derived.standings.reduce((sum, r) => sum + r.gp, 0)
+  const leagueGfpg = leagueGp > 0 ? derived.standings.reduce((sum, r) => sum + r.gf, 0) / leagueGp : null
+  const leagueGapg = leagueGp > 0 ? derived.standings.reduce((sum, r) => sum + r.ga, 0) / leagueGp : null
+  const teamGfpg = standing?.gp > 0 ? standing.gf / standing.gp : null
+  const teamGapg = standing?.gp > 0 ? standing.ga / standing.gp : null
 
   // Schedule Strength (für die Matchups-Sektion) - NUR Anzeige, kein
   // Prognose-Input: bestehende computeFixtures() für Ø-Gegner-ELO. Die
@@ -344,7 +357,7 @@ export default function TeamDetail() {
     },
     {
       key: 'actions', label: '', num: true, noSort: true,
-      render: (p) => (
+      render: (p) => !isAdmin ? null : (
         <span className="row gap-sm" style={{ justifyContent: 'flex-end' }}>
           <button className="btn ghost sm" onClick={(e) => { e.stopPropagation(); setEditing(p) }}>Bearbeiten</button>
           <button className="btn ghost sm" onClick={(e) => { e.stopPropagation(); removePlayer(p) }}>Entfernen</button>
@@ -363,7 +376,7 @@ export default function TeamDetail() {
     { key: 'shutouts', label: 'SO', num: true, value: (p) => statById[p.id]?.shutouts || 0, render: (p) => statById[p.id]?.shutouts || 0 },
     {
       key: 'actions', label: '', num: true, noSort: true,
-      render: (p) => (
+      render: (p) => !isAdmin ? null : (
         <span className="row gap-sm" style={{ justifyContent: 'flex-end' }}>
           <button className="btn ghost sm" onClick={(e) => { e.stopPropagation(); setEditing(p) }}>Bearbeiten</button>
           <button className="btn ghost sm" onClick={(e) => { e.stopPropagation(); removePlayer(p) }}>Entfernen</button>
@@ -380,10 +393,12 @@ export default function TeamDetail() {
           <h1 className="row gap-sm"><TeamLogo team={team} size={32} />{team.name}</h1>
           <div className="sub">{team.short} · {players.length} Spieler im Kader</div>
         </div>
-        <div className="row gap-sm">
-          <button className="btn" onClick={() => setEditTeam(true)}>Team bearbeiten</button>
-          <button className="btn primary" onClick={() => setEditing({})}>Spieler hinzufügen</button>
-        </div>
+        {isAdmin && (
+          <div className="row gap-sm">
+            <button className="btn" onClick={() => setEditTeam(true)}>Team bearbeiten</button>
+            <button className="btn primary" onClick={() => setEditing({})}>Spieler hinzufügen</button>
+          </div>
+        )}
       </div>
 
       {/* A) Team Hero - die wichtigsten Kennzahlen auf einen Blick, oberhalb
@@ -596,8 +611,8 @@ export default function TeamDetail() {
         {players.length === 0 ? (
           <div className="empty">
             <div className="title">Noch keine Spieler</div>
-            <div className="hint">Füge die Spieler dieses Teams hinzu.</div>
-            <div style={{ marginTop: 14 }}><button className="btn primary" onClick={() => setEditing({})}>Ersten Spieler hinzufügen</button></div>
+            <div className="hint">{isAdmin ? 'Füge die Spieler dieses Teams hinzu.' : 'Für dieses Team sind noch keine Spieler erfasst.'}</div>
+            {isAdmin && <div style={{ marginTop: 14 }}><button className="btn primary" onClick={() => setEditing({})}>Ersten Spieler hinzufügen</button></div>}
           </div>
         ) : rosterFiltered.length === 0 ? (
           <div className="muted" style={{ fontSize: 12.5 }}>Keine Spieler gefunden.</div>
@@ -750,38 +765,61 @@ export default function TeamDetail() {
 
       <div className="card card-pad mb">
         <h2 className="mb">Tore &amp; Splits</h2>
-        <div className="section-label">Offense / Defense</div>
-        <div className="tiles" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))' }}>
-          <div className="tile"><div className="label">Tore/Spiel</div><div className="value mono">{gpg}</div></div>
-          <div className="tile"><div className="label">Gegentore/Spiel</div><div className="value mono">{gpa}</div></div>
-          <div className="tile"><div className="label">SOG/Spiel</div><div className="value mono">{sogForPg != null ? sogForPg.toFixed(1) : '–'}</div></div>
-          <div className="tile"><div className="label">SOG zugelassen/Spiel</div><div className="value mono">{sogAllowedPg != null ? sogAllowedPg.toFixed(1) : '–'}</div></div>
+
+        <div className="section-label">Tore und Gegentore pro Spiel (aktuelle Saison)</div>
+        <GoalCompareBars
+          rows={[
+            { label: 'Tore/Spiel', value: teamGfpg, league: leagueGfpg, color: team.color },
+            { label: 'Gegentore/Spiel', value: teamGapg, league: leagueGapg, color: 'var(--text-faint)' },
+          ]}
+        />
+        <div className="muted" style={{ fontSize: 10.5, marginTop: 4 }}>
+          Strich = Liga-Durchschnitt{leagueGfpg != null ? ` (${leagueGfpg.toFixed(2)} Tore pro Spiel und Team)` : ''}, berechnet aus allen Teams der Tabelle.
         </div>
-        {histLast3.length > 0 && (
-          <div className="muted mt" style={{ fontSize: 12 }}>
-            Historische Entwicklung (Ø Tore/Sp. · Ø Gegent./Sp., letzte {histLast3.length} Archiv-Saisons): {histLast3.map((s) => {
-              const r = teamSeasonRates(s)
-              return `${s.season.slice(2)} ${fmt2(r.gfpg)}/${fmt2(r.gapg)}`
-            }).join(' · ')}
+
+        <div className="tiles mt" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))' }}>
+          <div className="tile">
+            <div className="label">SOG/Spiel</div>
+            <div className="value mono">–</div>
+            <div className="muted" style={{ fontSize: 10.5, marginTop: 4 }}>Nicht verfügbar: Schüsse des Teams nur für {sogCoverageGames} von {standing?.gp ?? 0} Spielen im Boxscore</div>
           </div>
-        )}
+          <div className="tile">
+            <div className="label">SOG zugelassen/Spiel</div>
+            <div className="value mono">{sogAllowedPg != null ? sogAllowedPg.toFixed(1) : '–'}</div>
+            <div className="muted" style={{ fontSize: 10.5, marginTop: 4 }}>aus den Torhüter-Saisontotals</div>
+          </div>
+        </div>
+
+        <div className="section-label mt">Entwicklung über Saisons (Tore und Gegentore pro Spiel)</div>
+        <GoalsHistoryChart seasons={getTeamSeasons(teamHistoryData, id)} color={team.color} />
 
         {standing && (
           <>
             <div className="section-label mt">Heim / Auswärts</div>
-            <div className="grid grid-2">
-              {[['Heimspiele', splits.home], ['Auswärtsspiele', splits.away]].map(([label, s]) => (
-                <div key={label}>
-                  <div className="muted" style={{ fontSize: 11.5, fontWeight: 700, marginBottom: 4 }}>{label}</div>
-                  <div style={{ fontSize: '0.9rem', display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.5rem' }}>
-                    <div><span className="muted">Spiele</span> <strong>{s.gp}</strong></div>
-                    <div><span className="muted">Bilanz</span> <strong>{s.w}-{s.otw}-{s.otl}-{s.l}</strong></div>
-                    <div><span className="muted">Punkte/Sp.</span> <strong>{s.gp > 0 ? fmt2(s.pts / s.gp) : '–'}</strong></div>
-                    <div><span className="muted">Tore/Sp.</span> <strong>{s.gp > 0 ? fmt2(s.gf / s.gp) : '–'}</strong></div>
-                    <div><span className="muted">Gegent./Sp.</span> <strong>{s.gp > 0 ? fmt2(s.ga / s.gp) : '–'}</strong></div>
-                  </div>
-                </div>
-              ))}
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th className="left"></th><th className="num">Heim</th><th className="num">Auswärts</th></tr></thead>
+                <tbody>
+                  {[
+                    ['Spiele', (x) => x.gp],
+                    ['Bilanz S–OTS–OTN–N', (x) => `${x.w}–${x.otw}–${x.otl}–${x.l}`],
+                    ['Punkte/Spiel', (x) => (x.gp > 0 ? fmt2(x.pts / x.gp) : '–')],
+                    ['Tore/Spiel', (x) => (x.gp > 0 ? fmt2(x.gf / x.gp) : '–')],
+                    ['Gegentore/Spiel', (x) => (x.gp > 0 ? fmt2(x.ga / x.gp) : '–')],
+                    ['Siegquote', (x) => (x.gp > 0 ? fmtPct((x.w + x.otw) / x.gp) : '–')],
+                  ].map(([label, fn]) => (
+                    <tr key={label}>
+                      <td className="left muted" style={{ fontSize: 12.5 }}>{label}</td>
+                      <td className="num"><strong>{fn(splits.home)}</strong></td>
+                      <td className="num"><strong>{fn(splits.away)}</strong></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="muted" style={{ fontSize: 10.5, marginTop: 4 }}>
+              Siegquote = Siege inkl. Siege n.V./PS geteilt durch Spiele.
+              {(splits.home.gp < 5 || splits.away.gp < 5) && ` Kleine Stichprobe: ${splits.home.gp} Heim- und ${splits.away.gp} Auswärtsspiele.`}
             </div>
             {splits.home.gp > 0 && splits.away.gp > 0 && (
               <div className="mt">
@@ -919,9 +957,82 @@ export default function TeamDetail() {
         </div>
       </div>
 
-      {editing && <PlayerModal player={editing} onSave={savePlayer} onClose={() => setEditing(null)} />}
-      {editTeam && <TeamModal team={team} onSave={saveTeam} onClose={() => setEditTeam(false)} />}
+      {isAdmin && editing && <PlayerModal player={editing} onSave={savePlayer} onClose={() => setEditing(null)} />}
+      {isAdmin && editTeam && <TeamModal team={team} onSave={saveTeam} onClose={() => setEditTeam(false)} />}
     </>
+  )
+}
+
+// Vergleichsbalken Team gegen Liga-Durchschnitt (Strich). Skala je Zeile bis
+// knapp über das Maximum aus Team- und Liga-Wert; fehlende Werte als "–".
+function GoalCompareBars({ rows }) {
+  const max = Math.max(1, ...rows.flatMap((r) => [r.value, r.league].filter((v) => v != null)))
+  const scale = max * 1.15
+  return (
+    <div>
+      {rows.map((r) => (
+        <div key={r.label} className="row" style={{ gap: 10, padding: '5px 0' }}>
+          <span style={{ width: 110, flex: 'none', fontSize: 12.5 }}>{r.label}</span>
+          <div style={{ flex: 1, minWidth: 0, position: 'relative', height: 12, background: 'var(--border)', borderRadius: 6 }}>
+            {r.value != null && <div style={{ width: `${(r.value / scale) * 100}%`, height: '100%', borderRadius: 6, background: r.color }} />}
+            {r.league != null && (
+              <div title={`Liga-Durchschnitt ${r.league.toFixed(2)}`} style={{ position: 'absolute', left: `${(r.league / scale) * 100}%`, top: -3, bottom: -3, width: 2, background: 'var(--text)' }} />
+            )}
+          </div>
+          <span style={{ width: 80, flex: 'none', textAlign: 'right', fontSize: 12 }}>
+            <strong>{r.value != null ? r.value.toFixed(2) : '–'}</strong>
+            {r.league != null && <span className="muted"> / Ø {r.league.toFixed(2)}</span>}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// Tore/Gegentore pro Spiel je Archiv-Saison (public/team-history.json).
+// Nur Saisons mit gp > 0 - Saisons ohne Spiele werden nicht als Statistik
+// gezeichnet. Der Hinweis zu Playoffs steht bewusst direkt beim Chart.
+function GoalsHistoryChart({ seasons, color }) {
+  const played = (seasons || []).filter((s) => s.gp > 0)
+  const note = 'Hinweis: Archivierte Saison-Totals können Playoffs enthalten bzw. Regular Season und Playoffs nicht immer sauber trennen.'
+  if (played.length < 2) {
+    return <div className="muted" style={{ fontSize: 12 }}>Nicht genug historische Saisons mit Spieldaten. <span style={{ display: 'block', marginTop: 4 }}>{note}</span></div>
+  }
+  const W = 700, H = 150, pad = { l: 34, r: 26, t: 12, b: 22 }
+  const gf = played.map((s) => s.gf / s.gp)
+  const ga = played.map((s) => s.ga / s.gp)
+  const max = Math.max(1, ...gf, ...ga) * 1.1
+  // x nach Saisonjahr (nicht nach Index): Lücken im Archiv bleiben als Lücken sichtbar.
+  const years = played.map((s) => parseInt(s.season, 10))
+  const y0 = Math.min(...years), y1 = Math.max(...years)
+  const x = (i) => pad.l + ((years[i] - y0) / Math.max(1, y1 - y0)) * (W - pad.l - pad.r)
+  const y = (v) => pad.t + (1 - v / max) * (H - pad.t - pad.b)
+  const path = (vals) => vals.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i)},${y(v)}`).join(' ')
+  return (
+    <div>
+      <div className="row gap-sm" style={{ fontSize: 11.5, marginBottom: 4 }}>
+        <span className="row gap-sm"><span style={{ width: 14, height: 3, background: color, display: 'inline-block' }} />Tore/Sp.</span>
+        <span className="row gap-sm"><span style={{ width: 14, height: 0, borderTop: '3px dashed var(--text-dim)', display: 'inline-block' }} />Gegentore/Sp.</span>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxWidth: 760 }} role="img" aria-label="Tore und Gegentore pro Spiel je Saison">
+        {[0, 1, 2, 3].filter((t) => t <= max).map((t) => (
+          <g key={t}>
+            <line x1={pad.l} x2={W - pad.r} y1={y(t)} y2={y(t)} stroke="var(--border)" />
+            <text x={pad.l - 6} y={y(t) + 3} fontSize="10" fill="var(--text-dim)" textAnchor="end">{t}</text>
+          </g>
+        ))}
+        <path d={path(gf)} fill="none" stroke={color} strokeWidth="2.5" />
+        <path d={path(ga)} fill="none" stroke="var(--text-dim)" strokeWidth="2.5" strokeDasharray="6 4" />
+        {played.map((s, i) => (
+          <g key={s.season}>
+            <circle cx={x(i)} cy={y(gf[i])} r="3.5" fill={color}><title>{`${s.season}: ${gf[i].toFixed(2)} Tore/Sp. (${s.gp} Spiele)`}</title></circle>
+            <circle cx={x(i)} cy={y(ga[i])} r="3.5" fill="var(--text-dim)"><title>{`${s.season}: ${ga[i].toFixed(2)} Gegentore/Sp. (${s.gp} Spiele)`}</title></circle>
+            <text x={x(i)} y={H - 6} fontSize="10" fill="var(--text-dim)" textAnchor="middle">{s.season.slice(2)}</text>
+          </g>
+        ))}
+      </svg>
+      <div className="muted" style={{ fontSize: 10.5, marginTop: 4 }}>{note} Saisons ohne Spieldaten sind nicht eingezeichnet.</div>
+    </div>
   )
 }
 

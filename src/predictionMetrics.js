@@ -207,7 +207,9 @@ export function computeOtSoBreakdown(rows) {
 export const CALIBRATION_BINS_10 = Array.from({ length: 10 }, (_, i) => ({
   lo: i / 10, hi: (i + 1) / 10, label: `${i * 10}–${(i + 1) * 10}%`,
 }))
-const LOW_SAMPLE_THRESHOLD = 10
+// Reliability estimates from fewer than 20 matches are too noisy to read as
+// stable calibration evidence; expose this explicitly to the UI.
+export const CALIBRATION_LOW_SAMPLE_THRESHOLD = 20
 
 export function computeCalibrationBins10(rows) {
   return CALIBRATION_BINS_10.map((b) => {
@@ -219,7 +221,7 @@ export function computeCalibrationBins10(rows) {
     if (n === 0) return { ...b, count: 0, avgPredicted: null, actualRate: null, diff: null, lowSample: true }
     const avgPredicted = inBin.reduce((s, r) => s + r.prediction.homeWinProbability, 0) / n
     const actualRate = inBin.reduce((s, r) => s + (r.homeWon ? 1 : 0), 0) / n
-    return { ...b, count: n, avgPredicted, actualRate, diff: avgPredicted - actualRate, lowSample: n < LOW_SAMPLE_THRESHOLD }
+    return { ...b, count: n, avgPredicted, actualRate, diff: avgPredicted - actualRate, lowSample: n < CALIBRATION_LOW_SAMPLE_THRESHOLD }
   })
 }
 
@@ -233,6 +235,29 @@ export function computeECE(rows, bins = null) {
   const b = bins || computeCalibrationBins10(rows)
   const sum = b.reduce((s, bin) => (bin.count > 0 ? s + (bin.count / total) * Math.abs(bin.diff) : s), 0)
   return sum
+}
+
+// Keep the all-version aggregate intact while also exposing metrics for each
+// immutable snapshot version. This is descriptive only; versions are not
+// treated as a controlled experiment because their game samples may differ.
+export function computeModelVersionBreakdown(rows) {
+  const grouped = new Map()
+  for (const row of rows || []) {
+    const version = row.prediction.modelVersion || 'Unbekannte Version'
+    if (!grouped.has(version)) grouped.set(version, [])
+    grouped.get(version).push(row)
+  }
+  return [...grouped.entries()].map(([modelVersion, subset]) => {
+    const bins = computeCalibrationBins10(subset)
+    return {
+      modelVersion,
+      n: subset.length,
+      accuracy: computeAccuracy(subset),
+      brier: computeBrierScore(subset),
+      logLoss: computeLogLoss(subset),
+      ece: computeECE(subset, bins),
+    }
+  }).sort((a, b) => b.n - a.n || a.modelVersion.localeCompare(b.modelVersion))
 }
 
 // Gleitender Durchschnitt über die letzten `window` Spiele (chronologisch),
@@ -324,9 +349,14 @@ export function computeDrift(rows, window = 25) {
   if (!rows || rows.length < window * 2) return null
   const first = rows.slice(0, window)
   const last = rows.slice(-window)
-  const withCalibError = (subset) => {
+  const summarize = (subset) => {
     const bias = computeAggregateBias(subset)
-    return { ...metricsForSubset(subset), calibrationError: bias ? Math.abs(bias.diff) : null }
+    const bins = computeCalibrationBins10(subset)
+    return {
+      ...metricsForSubset(subset),
+      ece: computeECE(subset, bins),
+      aggregateBias: bias ? bias.diff : null,
+    }
   }
-  return { first: withCalibError(first), last: withCalibError(last) }
+  return { first: summarize(first), last: summarize(last) }
 }

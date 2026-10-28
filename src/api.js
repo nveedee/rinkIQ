@@ -1,10 +1,24 @@
 // Dünner Wrapper um fetch. Im Dev-Modus proxyt Vite /api -> localhost:3001.
 const base = '/api'
 
+// CSRF-Token (Double-Submit) aus dem lesbaren Cookie nlcsrf. Wird bei
+// mutierenden Requests im Header X-CSRF-Token mitgeschickt (server/auth.js).
+function readCsrf() {
+  if (typeof document === 'undefined') return null
+  const m = document.cookie.match(/(?:^|;\s*)nlcsrf=([^;]+)/)
+  return m ? decodeURIComponent(m[1]) : null
+}
+
 async function req(method, url, body) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (method !== 'GET' && method !== 'HEAD') {
+    const csrf = readCsrf()
+    if (csrf) headers['X-CSRF-Token'] = csrf
+  }
   const res = await fetch(base + url, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers,
+    credentials: 'same-origin',
     body: body ? JSON.stringify(body) : undefined,
   })
   if (!res.ok) {
@@ -13,13 +27,26 @@ async function req(method, url, body) {
       const j = await res.json()
       if (j.error) msg = j.error
     } catch (_) {}
-    throw new Error(msg)
+    const err = new Error(msg)
+    err.status = res.status
+    throw err
   }
   return res.json()
 }
 
 export const api = {
+  // Admin: vollständige DB (geschützt). Public: kuratierte Projektion.
   getData: () => req('GET', '/data'),
+  getPublicData: () => req('GET', '/public/data'),
+  getPublicStatus: () => req('GET', '/public/status'),
+
+  // Authentifizierung
+  getSession: () => req('GET', '/auth/session'),
+  login: (username, password) => req('POST', '/auth/login', { username, password }),
+  logout: () => req('POST', '/auth/logout'),
+
+  // Admin-Systemstatus
+  getAdminSystem: () => req('GET', '/admin/system'),
 
   updateSettings: (patch) => req('PUT', '/settings', patch),
 

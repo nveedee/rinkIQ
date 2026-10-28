@@ -783,11 +783,12 @@ async function runSync({ write, log, now = new Date() }) {
   const { ensurePredictionSnapshots } = await import('./predictions.js')
   const predictionSummary = ensurePredictionSnapshots(db, { log })
 
-  if (write && (updated > 0 || predictionSummary.created > 0 || replaySaved > 0)) writeDb(db)
+  if (write && (updated > 0 || predictionSummary.created > 0 || predictionSummary.updated > 0 || replaySaved > 0)) writeDb(db)
 
   const summary = {
     checked: candidates.length, updated, unchanged, duplicates, errors, replaySaved,
     predictionsCreated: predictionSummary.created,
+    predictionsUpdated: predictionSummary.updated,
   }
   log(`→ ${updated} Spiel${updated === 1 ? '' : 'e'} aktualisiert`)
   log(`→ ${duplicates} Duplikate`)

@@ -19,7 +19,10 @@
     "test:wheel": "node --test src/wheelGeometry.test.js",
     "test:scoreline": "node --test src/scorelineMatrix.test.js",
     "test:live": "node --test src/liveProbability.test.js",
-    "test:prediction": "node --test src/pregamePrediction.test.js"
+    "test:advice": "node --test src/topscorerAdvice.test.js",
+    "test:prediction": "node --test src/pregamePrediction.test.js",
+    "test:auth": "node --test server/auth.test.js",
+    "test:feature": "node --test src/featureConfig.test.js"
   },
   "dependencies": {
     "express": "^4.19.2",

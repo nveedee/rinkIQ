@@ -11,3 +11,8 @@ server/data/*.pretest-backup
 server/data/nl-sync-status.json
 server/data/sihf-sync-status.json
 server/data/historical/
+
+# Lokale DB-Backups (grosse Dumps, nicht versionieren)
+backups/
+# Versehentliches, leeres Artefakt (z.B. durch fehlgeleitete Ausgabe)
+/vite

@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App.jsx'
+import { AuthProvider } from './authContext.jsx'
 import { DataProvider } from './DataContext.jsx'
 import { SimResultsProvider } from './simResultsContext.jsx'
 import './styles.css'
@@ -9,11 +10,13 @@ import './styles.css'
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter>
-      <DataProvider>
-        <SimResultsProvider>
-          <App />
-        </SimResultsProvider>
-      </DataProvider>
+      <AuthProvider>
+        <DataProvider>
+          <SimResultsProvider>
+            <App />
+          </SimResultsProvider>
+        </DataProvider>
+      </AuthProvider>
     </BrowserRouter>
   </React.StrictMode>
 )

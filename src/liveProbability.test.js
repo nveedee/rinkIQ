@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   computeLiveWinProbability, buildLiveProbabilityTimeline, remainingFraction, elapsedMinutesFromPeriodClock, OT_SHARE_OF_TIES,
-  regulationPeriodOffsetMinutes, isIntermissionStatus, regulationElapsedMinutes, advanceDisplayedElapsed, periodTimeFromElapsed,
+  regulationPeriodOffsetMinutes, isIntermissionStatus, confirmedRegulationElapsed, advanceDisplayedElapsed, periodTimeFromElapsed,
 } from './liveProbability.js'
 
 // Repräsentative Pre-Game-Werte (Grössenordnung wie CALIBRATION.leagueHomeGPG/
@@ -240,24 +240,46 @@ test('isIntermissionStatus: erkennt Pause/Unterbrechung', () => {
   assert.equal(isIntermissionStatus('3. Drittel'), false)
 })
 
-test('regulationElapsedMinutes: percent wird ins Drittel-Fenster des verbindlichen Namens geklemmt', () => {
-  // 1. Drittel ~05:00 (percent ~8.3)
-  assert.ok(Math.abs(regulationElapsedMinutes({ statusLabel: '1. Drittel', percent: 8.33 }) - 5) < 0.1)
-  // 2. Drittel ~25:00 (percent ~41.7)
-  assert.ok(Math.abs(regulationElapsedMinutes({ statusLabel: '2. Drittel', percent: 41.67 }) - 25) < 0.1)
-  // 3. Drittel ~50:00 (percent ~83.3)
-  assert.ok(Math.abs(regulationElapsedMinutes({ statusLabel: '3. Drittel', percent: 83.33 }) - 50) < 0.1)
-  // Drittelwechsel-Fall: Name sagt "3. Drittel", percent hängt noch bei 66 (=39.6') -> auf 40:00 geklemmt
-  assert.equal(regulationElapsedMinutes({ statusLabel: '3. Drittel', percent: 66 }), 40)
-  // percent zu hoch fürs genannte Drittel -> ans Drittelende geklemmt
-  assert.equal(regulationElapsedMinutes({ statusLabel: '2. Drittel', percent: 95 }), 40)
+// confirmedRegulationElapsed: Zeit AUSSCHLIESSLICH aus Drittel-Name + echten
+// Ereigniszeiten des jeweiligen Spiels - NIE aus percent (global/unzuverlässig).
+test('confirmedRegulationElapsed: zwei gleichzeitige Spiele mit identischem percent, aber unterschiedlichen Ereigniszeiten -> unterschiedliche Zeit', () => {
+  // Reale Rohdaten (09.10.2026, beide percent=83, name "3. Drittel"):
+  // SCB-BIE letztes Ereignis 54:10, DAV-KLO letztes Ereignis 54:01 (Strafe).
+  const scbBie = confirmedRegulationElapsed({ statusLabel: '3. Drittel', eventMinutes: [22.55, 34.27, 37.63, 54.17, 48.75] })
+  const davKlo = confirmedRegulationElapsed({ statusLabel: '3. Drittel', eventMinutes: [2.68, 3.68, 29.07, 32.55, 45.8, 54.02] })
+  assert.ok(Math.abs(scbBie - 54.17) < 0.01, `SCB-BIE erwartet ~54.17, war ${scbBie}`)
+  assert.ok(Math.abs(davKlo - 54.02) < 0.01, `DAV-KLO erwartet ~54.02, war ${davKlo}`)
+  assert.notEqual(scbBie, davKlo) // nicht mehr dieselbe (percent-)Zeit
 })
 
-test('regulationElapsedMinutes + periodTimeFromElapsed: Marker-Zeit passt zum angezeigten Drittel', () => {
-  const elapsed = regulationElapsedMinutes({ statusLabel: '3. Drittel', percent: 83 }) // ~49.8'
+test('confirmedRegulationElapsed: jüngstes Tor-Event bestimmt die Untergrenze (54:10 -> 3. Drittel 14:10, nicht 09:48)', () => {
+  const elapsed = confirmedRegulationElapsed({ statusLabel: '3. Drittel', eventMinutes: [22.55, 54.17] })
   const { period, periodTime } = periodTimeFromElapsed(elapsed)
   assert.equal(period, 3)
-  assert.equal(periodTime, '09:48')
+  assert.equal(periodTime, '14:10')
+})
+
+test('confirmedRegulationElapsed: ohne Ereignis im Drittel -> Drittel-Beginn (kein erfundener percent-Wert)', () => {
+  // 3. Drittel gerade begonnen, letztes Ereignis stammt aus dem 2. Drittel (38:34)
+  assert.equal(confirmedRegulationElapsed({ statusLabel: '3. Drittel', eventMinutes: [12.0, 38.57] }), 40)
+})
+
+test('confirmedRegulationElapsed: altes Ereignis darf die Zeit nicht über das laufende Drittel hinausschieben ist bereits geklemmt; frühes Drittel', () => {
+  // 1. Drittel, Tor bei 05:00 -> 05:00 (nicht ans percent gebunden)
+  assert.ok(Math.abs(confirmedRegulationElapsed({ statusLabel: '1. Drittel', eventMinutes: [5.0] }) - 5) < 1e-9)
+})
+
+test('confirmedRegulationElapsed: veralteter/fehlender Snapshot (keine Zeitinfo) -> null (UI: "nicht verfügbar")', () => {
+  assert.equal(confirmedRegulationElapsed({ statusLabel: null, eventMinutes: [] }), null)
+  assert.equal(confirmedRegulationElapsed({ statusLabel: '', eventMinutes: null }), null)
+})
+
+test('confirmedRegulationElapsed: reine Funktion ohne geteilten State (pro Spiel isoliert)', () => {
+  const a = confirmedRegulationElapsed({ statusLabel: '2. Drittel', eventMinutes: [25.0] })
+  const b = confirmedRegulationElapsed({ statusLabel: '1. Drittel', eventMinutes: [5.0] })
+  // Erneuter Aufruf von a liefert exakt dasselbe (kein Seiteneffekt durch b)
+  assert.equal(confirmedRegulationElapsed({ statusLabel: '2. Drittel', eventMinutes: [25.0] }), a)
+  assert.notEqual(a, b)
 })
 
 test('advanceDisplayedElapsed: läuft zwischen Snapshots per Wanduhr weiter, innerhalb des Drittels', () => {

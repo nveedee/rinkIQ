@@ -331,6 +331,10 @@ export function syncPlayers(db, apiPlayers, teamMap, log, todayIso = todayInZuri
     const number = parseNumber(p.number)
     const marketValue = typeof p.topscorerMarketValue === 'number' ? p.topscorerMarketValue : null
     const marketValueTrend = typeof p.topscorerMarketValueTrend === 'number' ? p.topscorerMarketValueTrend : null
+    // Topscorer-Fantasy-Punkte derselben NL-API-Quelle wie der Marktwert
+    // (Topscorers-Spiel) - NICHT die Hockey-Punkte (G+A, siehe apiStats.points).
+    const topscorerPoints = typeof p.topscorerPoints === 'number' ? p.topscorerPoints : null
+    const topscorerPointAverage = typeof p.topscorerPointAverage === 'number' ? p.topscorerPointAverage : null
     const apiStats = buildApiStats(p, position)
 
     let local = db.players.find((pl) => pl.externalId === p.playerId)
@@ -353,6 +357,8 @@ export function syncPlayers(db, apiPlayers, teamMap, log, todayIso = todayInZuri
       local.apiStats = apiStats
       local.marketValue = marketValue
       local.marketValueTrend = marketValueTrend
+      local.topscorerPoints = topscorerPoints
+      local.topscorerPointAverage = topscorerPointAverage
       if (appendMarketValueSnapshot(local, marketValue, todayIso)) marketValueSnapshotsAppended++
       updated++
     } else {
@@ -366,6 +372,8 @@ export function syncPlayers(db, apiPlayers, teamMap, log, todayIso = todayInZuri
         apiStats,
         marketValue,
         marketValueTrend,
+        topscorerPoints,
+        topscorerPointAverage,
       }
       if (appendMarketValueSnapshot(newPlayer, marketValue, todayIso)) marketValueSnapshotsAppended++
       db.players.push(newPlayer)

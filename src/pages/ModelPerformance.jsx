@@ -22,7 +22,7 @@ import {
   computeCalibration, computeFavoriteWinRate, computeUpsetRate, computeCheckpoints,
   computeCumulativeSeries, computeMAE, computeAggregateBias, computeOtSoBreakdown,
   computeCalibrationBins10, computeECE, computeRollingSeries, computeSegments,
-  computeTeamStats, computeBiggestMisses, computeDrift,
+  computeTeamStats, computeBiggestMisses, computeDrift, computeModelVersionBreakdown,
 } from '../predictionMetrics.js'
 
 // Statische Referenzwerte aus dem bereits validierten historischen
@@ -70,6 +70,7 @@ export default function ModelPerformance() {
   const teamStats = useMemo(() => computeTeamStats(rows), [rows])
   const biggestMisses = useMemo(() => computeBiggestMisses(rows, 10), [rows])
   const drift = useMemo(() => computeDrift(rows, 25), [rows])
+  const modelVersions = useMemo(() => computeModelVersionBreakdown(rows), [rows])
 
   const predictedCount = data?.predictions?.length || 0
   const teamById = (id) => data?.teams?.find((t) => t.id === id)
@@ -109,6 +110,29 @@ export default function ModelPerformance() {
         <div className="stat"><strong>{predictedCount}</strong><span>Prognostizierte Spiele</span></div>
         <div className="stat"><strong>{rows.length}</strong><span>Abgeschlossene Spiele mit Prediction</span></div>
       </div>
+
+      {modelVersions.length > 0 && (
+        <>
+          <div className="section-label">Performance nach Snapshot-Version</div>
+          <div className="card mb">
+            <div className="muted card-pad" style={{ fontSize: 12 }}>
+              Die Gesamtkennzahlen darunter bleiben der Gesamtmix. Diese Aufschlüsselung zeigt die gespeicherte Modellversion je Snapshot; unterschiedliche Versionen sind wegen möglicherweise anderer Spielstichproben kein kontrollierter Variantenvergleich.
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead><tr><th className="left">Modellversion</th><th className="num">n</th><th className="num">Accuracy</th><th className="num">Brier</th><th className="num">Log Loss</th><th className="num">ECE</th></tr></thead>
+                <tbody>{modelVersions.map((m) => (
+                  <tr key={m.modelVersion}>
+                    <td className="left">{m.modelVersion}</td><td className="num">{m.n}</td>
+                    <td className="num">{fmtPct(m.accuracy)}</td><td className="num">{fmtScore(m.brier)}</td>
+                    <td className="num">{fmtScore(m.logLoss)}</td><td className="num">{fmtScore(m.ece)}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
 
       {rows.length === 0 ? (
         <div className="empty">
@@ -159,7 +183,7 @@ export default function ModelPerformance() {
             <div className="row spread mb" style={{ flexWrap: 'wrap', gap: 10 }}>
               <div className="muted" style={{ fontSize: 12.5, maxWidth: 520 }}>
                 10 Bins über die rohe Heim-Wahrscheinlichkeit (0–100%): sind z.B. 60–70%-Prognosen tatsächlich
-                ungefähr 60–70% Heimsiege? Bins mit weniger als 10 Spielen sind als geringe Aussagekraft markiert.
+                ungefähr 60–70% Heimsiege? Bins mit weniger als 20 Spielen sind als geringe Aussagekraft markiert; auch grössere Stichproben bleiben saison- und mixabhängig.
               </div>
               <div className="tile" style={{ minWidth: 160 }}>
                 <div className="label">Expected Calibration Error</div>
@@ -304,10 +328,10 @@ export default function ModelPerformance() {
               <div className="card mb">
                 <div className="table-wrap">
                   <table>
-                    <thead><tr><th className="left">Zeitraum</th><th className="num">n</th><th className="num">Accuracy</th><th className="num">Brier</th><th className="num">LogLoss</th><th className="num">Calibration Error</th></tr></thead>
+                    <thead><tr><th className="left">Zeitraum</th><th className="num">n</th><th className="num">Accuracy</th><th className="num">Brier</th><th className="num">LogLoss</th><th className="num">ECE</th><th className="num">Aggregierter Bias</th></tr></thead>
                     <tbody>
-                      <SegmentRow label="Erste 25 Spiele" m={drift.first} extra="calibrationError" />
-                      <SegmentRow label="Letzte 25 Spiele" m={drift.last} extra="calibrationError" />
+                      <DriftRow label="Erste 25 Spiele" m={drift.first} />
+                      <DriftRow label="Letzte 25 Spiele" m={drift.last} />
                     </tbody>
                   </table>
                 </div>
@@ -388,6 +412,17 @@ function SegmentRow({ label, m, extra }) {
       <td className="num">{fmtScore(m.brier)}</td>
       <td className="num">{fmtScore(m.logLoss)}</td>
       <td className="num">{extra === 'calibrationError' ? fmtScore(m.calibrationError) : fmtPct(m.favoriteWinRate)}</td>
+    </tr>
+  )
+}
+
+function DriftRow({ label, m }) {
+  return (
+    <tr>
+      <td className="left">{label}{m.n < 20 && <span className="muted" style={{ marginLeft: 6, fontSize: 10.5 }}>geringe Aussagekraft</span>}</td>
+      <td className="num">{m.n}</td><td className="num">{fmtPct(m.accuracy)}</td>
+      <td className="num">{fmtScore(m.brier)}</td><td className="num">{fmtScore(m.logLoss)}</td>
+      <td className="num">{fmtScore(m.ece)}</td><td className="num">{fmtPp(m.aggregateBias)}</td>
     </tr>
   )
 }
