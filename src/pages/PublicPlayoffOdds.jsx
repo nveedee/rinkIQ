@@ -1,5 +1,6 @@
 import { useData } from '../DataContext.jsx'
 import Disclaimer from '../components/Disclaimer.jsx'
+import PositionMatrix from '../components/PositionMatrix.jsx'
 
 // ---------------------------------------------------------------------------
 // Öffentliche Playoff-/Meister-Wahrscheinlichkeiten - liest AUSSCHLIESSLICH
@@ -41,6 +42,20 @@ export default function PublicPlayoffOdds() {
 
   const rows = [...snap.rows].sort((a, b) => (b.pPlayoffs - a.pPlayoffs) || (b.avgPts - a.avgPts))
   const stand = fmtDateTime(snap.computedAt)
+
+  // Positions-Matrix (Rang-Verteilung): dieselbe Komponente wie im Admin, aus
+  // dem gespeicherten Snapshot gespeist. Nur vorhanden, wenn der Snapshot die
+  // Rang-Verteilung enthält (ältere Snapshots ohne -> Matrix wird ausgeblendet).
+  const matrixRows = rows
+    .filter((r) => r.rankDistribution)
+    .map((r) => ({
+      team: teamById?.(r.teamId),
+      rankDistribution: r.rankDistribution,
+      avgRank: r.avgRank,
+      medianRank: r.medianRank,
+      stdDevRank: r.stdDevRank,
+    }))
+    .filter((r) => r.team)
 
   return (
     <section>
@@ -90,6 +105,12 @@ export default function PublicPlayoffOdds() {
           </tbody>
         </table>
       </div>
+
+      {matrixRows.length > 0 && (
+        <div style={{ marginTop: 18 }}>
+          <PositionMatrix rows={matrixRows} runs={snap.runs} />
+        </div>
+      )}
     </section>
   )
 }

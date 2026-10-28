@@ -74,6 +74,11 @@ export function computeProjectionSnapshot(db, { runs = Number(process.env.PROJEC
     pLigaQualifikation: r.pLigaQualifikation,
     avgPts: r.avgPts,
     avgRank: r.avgRank,
+    // Rang-Verteilung (Counts je Rang 1..n) + Median/σ für die öffentliche
+    // Positions-Matrix (PositionMatrix.jsx teilt die Counts durch runs).
+    rankDistribution: r.rankDistribution,
+    medianRank: r.medianRank,
+    stdDevRank: r.stdDevRank,
   }))
   return {
     computedAt: new Date().toISOString(),
